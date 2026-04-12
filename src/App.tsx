@@ -42,6 +42,9 @@ import MatrixGenerator from "@/components/MatrixGenerator";
 import { MatrixRow, PHYSICS_COMPETENCIES } from "./types";
 import ExamGenerator from "@/components/ExamGenerator";
 import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
+import { useEffect } from "react";
+import { db } from "@/lib/firebase";
+import { doc, getDoc, setDoc, updateDoc, increment, onSnapshot } from "firebase/firestore";
 
 export default function App() {
   const [topic, setTopic] = useState("");
@@ -55,6 +58,40 @@ export default function App() {
   const [lessonPlan, setLessonPlan] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [visitCount, setVisitCount] = useState<number | null>(null);
+
+  // Visit Counter Logic
+  useEffect(() => {
+    const statsDocRef = doc(db, "stats", "global");
+
+    const trackVisit = async () => {
+      try {
+        const docSnap = await getDoc(statsDocRef);
+        if (docSnap.exists()) {
+          await updateDoc(statsDocRef, {
+            visitCount: increment(1)
+          });
+        } else {
+          await setDoc(statsDocRef, {
+            visitCount: 1
+          });
+        }
+      } catch (err) {
+        console.error("Error tracking visit:", err);
+      }
+    };
+
+    trackVisit();
+
+    // Listen for real-time updates
+    const unsubscribe = onSnapshot(statsDocRef, (doc) => {
+      if (doc.exists()) {
+        setVisitCount(doc.data().visitCount);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // Matrix State
   const [matrixSubject, setMatrixSubject] = useState<"general" | "physics">("general");
@@ -575,9 +612,15 @@ export default function App() {
 
       <footer className="max-w-7xl mx-auto px-4 py-8 border-t border-gray-200 mt-12">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-          <p className="text-sm text-gray-500">
-            © 2026 Giáo Án Số - Công cụ hỗ trợ giáo dục 4.0
-          </p>
+          <div className="flex flex-col md:flex-row items-center gap-4">
+            <p className="text-sm text-gray-500">
+              © 2026 Giáo Án Số - Công cụ hỗ trợ giáo dục 4.0
+            </p>
+            <div className="flex items-center gap-2 text-xs text-gray-400 bg-gray-50 px-3 py-1 rounded-full border border-gray-100">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>{visitCount !== null ? `${visitCount.toLocaleString()} lượt truy cập` : "Đang tải..."}</span>
+            </div>
+          </div>
           <div className="flex gap-6 text-sm text-gray-400">
             <Dialog>
               <DialogTrigger>
