@@ -43,8 +43,7 @@ import { MatrixRow, PHYSICS_COMPETENCIES } from "./types";
 import ExamGenerator from "@/components/ExamGenerator";
 import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
 import { useEffect } from "react";
-import { db } from "@/lib/firebase";
-import { doc, getDoc, setDoc, updateDoc, increment, onSnapshot } from "firebase/firestore";
+import { db, doc, getDoc, setDoc, updateDoc, increment, onSnapshot } from "@/lib/firebase";
 
 export default function App() {
   const [topic, setTopic] = useState("");
