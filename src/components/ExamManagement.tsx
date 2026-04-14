@@ -15,7 +15,7 @@ import {
   Trophy,
   Eye
 } from "lucide-react";
-import { db, collection, onSnapshot, query, where, doc, deleteDoc, updateDoc, auth } from "@/lib/firebase";
+import { db, collection, onSnapshot, query, where, doc, deleteDoc, updateDoc, auth, getDocs } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -129,8 +129,15 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
   const handleDeleteExam = async (examId: string) => {
     if (!window.confirm("Bạn có chắc chắn muốn xóa đề thi này? Hành động này không thể hoàn tác.")) return;
     try {
+      // 1. Delete associated results first
+      const resultsQuery = query(collection(db, "results"), where("examId", "==", examId));
+      const snapshot = await getDocs(resultsQuery);
+      const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, "results", d.id)));
+      await Promise.all(deletePromises);
+
+      // 2. Delete the exam
       await deleteDoc(doc(db, "exams", examId));
-      toast.success("Đã xóa đề thi thành công.");
+      toast.success("Đã xóa đề thi và các kết quả liên quan thành công.");
     } catch (err) {
       console.error(err);
       toast.error("Lỗi khi xóa đề thi.");
