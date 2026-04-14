@@ -65,7 +65,54 @@ YÊU CẦU TRÌNH BÀY:
 `;
 
   const contents: any[] = [{ text: prompt }];
-  
+  if (pdfData) {
+    contents.push({
+      inlineData: {
+        data: pdfData.data,
+        mimeType: pdfData.mimeType
+      }
+    });
+  }
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: { parts: contents },
+  });
+
+  return response.text;
+};
+
+export const integrateDigitalCompetency = async (
+  apiKey: string,
+  existingPlan: string,
+  customRequirements?: string,
+  pdfData?: { data: string, mimeType: string }
+) => {
+  const ai = new GoogleGenAI({ apiKey });
+  const prompt = `
+Hãy đóng vai một chuyên gia giáo dục và thực hiện việc LỒNG GHÉP NĂNG LỰC SỐ (Digital Competency) vào Kế hoạch bài dạy (KHBD) hiện có.
+
+DƯỚI ĐÂY LÀ KHUNG NĂNG LỰC SỐ CHUẨN (BGD) MÀ BẠN PHẢI TUÂN THỦ VÀ TÍCH HỢP:
+${BGD_DIGITAL_FRAMEWORK}
+
+YÊU CẦU THỰC HIỆN:
+1. Giữ nguyên cấu trúc và nội dung chuyên môn của KHBD cũ.
+2. Tại mục I. MỤC TIÊU, hãy thêm mục "4. Năng lực số" và liệt kê các mã năng lực số phù hợp với bài học này. Trình bày dưới dạng bảng: | Mã NLS | Hoạt động của học sinh để đạt năng lực |.
+3. Tại mục III. TIẾN TRÌNH DẠY HỌC:
+   - Trong các bảng "Hoạt động của GV và HS" và "Sản phẩm", hãy THÊM MỘT CỘT MỚI mang tên "Năng lực số (NLS)" bên cạnh cột "Sản phẩm" (hoặc lồng ghép khéo léo vào cột Sản phẩm nếu bảng quá rộng).
+   - Trong cột NLS này, hãy ghi rõ các mã năng lực số (ví dụ: 1.1NC1a) mà học sinh đạt được thông qua các bước thực hiện tương ứng.
+4. Bổ sung thêm các Thiết bị dạy học và Học liệu số cần thiết vào mục II để hỗ trợ việc hình thành năng lực số.
+5. ${customRequirements ? `YÊU CẦU RIÊNG CỦA GIÁO VIÊN: ${customRequirements}` : "Không có yêu cầu riêng."}
+
+${existingPlan ? `KHBD CŨ CẦN LỒNG GHÉP:\n${existingPlan}` : "KHBD CŨ CẦN LỒNG GHÉP ĐƯỢC CUNG CẤP TRONG FILE ĐÍNH KÈM."}
+
+YÊU CẦU TRÌNH BÀY:
+- Trả về toàn bộ KHBD hoàn chỉnh (bao gồm cả phần cũ và phần đã lồng ghép NLS).
+- Sử dụng Markdown chuẩn, bảng biểu rõ ràng.
+- Ngôn ngữ sư phạm chuyên nghiệp.
+`;
+
+  const contents: any[] = [{ text: prompt }];
   if (pdfData) {
     contents.push({
       inlineData: {
@@ -103,14 +150,35 @@ YÊU CẦU CHI TIẾT:
 3. ${notes ? `LƯU Ý THÊM TỪ GIÁO VIÊN: ${notes}` : "Không có lưu ý thêm."}
 4. NGUỒN CÂU HỎI: 
    ${sourceFile ? "- Sử dụng nội dung trong FILE ĐÍNH KÈM (Source File) làm nguồn câu hỏi chính." : "- Tự soạn câu hỏi dựa trên kiến thức chuẩn nếu không có file nguồn câu hỏi."}
-5. Đề thi cần có:
-   - Phần I: Trắc nghiệm nhiều lựa chọn.
-   - Phần II: Trắc nghiệm Đúng - Sai (nếu có).
-   - Phần III: Câu hỏi trả lời ngắn (nếu có).
-   - Phần IV: Tự luận (nếu có).
-   - Đáp án chi tiết cho tất cả các câu hỏi.
 
-Trình bày bằng định dạng Markdown rõ ràng, sạch sẽ. Sử dụng tiếng Việt.
+YÊU CẦU ĐỊNH DẠNG ĐẦU RA (QUAN TRỌNG):
+Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có markdown code blocks) theo cấu trúc sau:
+{
+  "title": "Tên đề thi",
+  "subject": "Môn học",
+  "grade": "Lớp",
+  "timeLimit": 45,
+  "questions": [
+    {
+      "id": "string_unique_id",
+      "type": "MC" | "TF" | "SA" | "ESSAY",
+      "level": "know" | "understand" | "apply" | "highApply",
+      "content": "Nội dung câu hỏi",
+      "options": [ // Chỉ dành cho MC và TF
+        { "id": "A", "text": "Nội dung phương án", "isCorrect": boolean }
+      ],
+      "correctAnswer": "string", // Dành cho SA
+      "explanation": "Giải thích chi tiết",
+      "points": number
+    }
+  ]
+}
+
+Lưu ý: 
+- MC: Trắc nghiệm 4 lựa chọn (A, B, C, D).
+- TF: Trắc nghiệm Đúng/Sai theo định dạng mới. Một câu hỏi lớn có 4 ý (a, b, c, d). "options" phải chứa đúng 4 phần tử tương ứng với 4 ý này. Mỗi phần tử trong "options" có "text" là nội dung của ý đó và "isCorrect" là true nếu ý đó ĐÚNG, false nếu ý đó SAI.
+- SA: Trả lời ngắn.
+- ESSAY: Tự luận.
 `;
 
   const contents: any[] = [{ text: prompt }];
@@ -136,6 +204,10 @@ Trình bày bằng định dạng Markdown rõ ràng, sạch sẽ. Sử dụng t
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: { parts: contents },
+    // @ts-ignore
+    generationConfig: {
+      responseMimeType: "application/json"
+    }
   });
 
   return response.text;
