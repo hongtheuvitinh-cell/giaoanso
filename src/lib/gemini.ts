@@ -212,3 +212,75 @@ Lưu ý:
 
   return response.text;
 };
+
+export const parseExistingExam = async (
+  apiKey: string,
+  notes: string,
+  sourceFile?: { data: string, mimeType: string }
+) => {
+  const ai = new GoogleGenAI({ apiKey });
+  const prompt = `
+Hãy đóng vai một chuyên gia số hóa học liệu. Nhiệm vụ của bạn là chuyển đổi một đề kiểm tra hiện có (từ file đính kèm) thành định dạng JSON để sử dụng trên hệ thống thi trực tuyến.
+
+YÊU CẦU CHI TIẾT:
+1. Phân tích file đính kèm để trích xuất toàn bộ các câu hỏi.
+2. Xác định loại câu hỏi cho từng câu:
+   - MC: Trắc nghiệm 4 lựa chọn (A, B, C, D).
+   - TF: Trắc nghiệm Đúng/Sai (thường có 4 ý a, b, c, d).
+   - SA: Trả lời ngắn.
+   - ESSAY: Tự luận.
+3. Cố gắng xác định mức độ (know, understand, apply, highApply) dựa trên nội dung câu hỏi.
+4. ${notes ? `LƯU Ý THÊM: ${notes}` : ""}
+
+YÊU CẦU ĐỊNH DẠNG ĐẦU RA (QUAN TRỌNG):
+Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có markdown code blocks) theo cấu trúc sau:
+{
+  "title": "Tên đề thi (trích xuất từ file hoặc tự đặt nếu không có)",
+  "subject": "Môn học",
+  "grade": "Lớp",
+  "timeLimit": 45,
+  "questions": [
+    {
+      "id": "string_unique_id",
+      "type": "MC" | "TF" | "SA" | "ESSAY",
+      "level": "know" | "understand" | "apply" | "highApply",
+      "content": "Nội dung câu hỏi",
+      "options": [ // Chỉ dành cho MC và TF
+        { "id": "string", "text": "Nội dung phương án", "isCorrect": boolean }
+      ],
+      "correctAnswer": "string", // Dành cho SA
+      "explanation": "Giải thích chi tiết (nếu có)",
+      "points": number
+    }
+  ]
+}
+
+Lưu ý về ID của options:
+- MC: id phải là "A", "B", "C", "D".
+- TF: id phải là "a", "b", "c", "d".
+`;
+
+  const contents: any[] = [{ text: prompt }];
+  
+  if (sourceFile) {
+    contents.push({
+      inlineData: {
+        data: sourceFile.data,
+        mimeType: sourceFile.mimeType
+      }
+    });
+  } else {
+    throw new Error("Cần cung cấp file nguồn để chuyển đổi.");
+  }
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: { parts: contents },
+    // @ts-ignore
+    generationConfig: {
+      responseMimeType: "application/json"
+    }
+  });
+
+  return response.text;
+};
