@@ -11,7 +11,8 @@ import {
   collection,
   query,
   where,
-  deleteDoc
+  deleteDoc,
+  getDocs
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { firebaseConfig } from "./firebase-config";
@@ -21,7 +22,7 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
 // Export firestore functions for better module resolution
-export { doc, getDoc, setDoc, updateDoc, increment, onSnapshot, addDoc, collection, query, where, deleteDoc };
+export { doc, getDoc, setDoc, updateDoc, increment, onSnapshot, addDoc, collection, query, where, deleteDoc, getDocs };
 
 export enum OperationType {
   CREATE = 'create',
