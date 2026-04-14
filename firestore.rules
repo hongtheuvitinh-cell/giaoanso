@@ -18,18 +18,62 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+             (getUserData().role == 'admin' || 
+              (request.auth.token.email == "trieuhaminh@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isTeacher() {
+      return isAuthenticated() && (getUserData().role == 'teacher' || isAdmin());
+    }
+
+    match /users/{uid} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == uid;
+      allow update: if isAdmin();
+    }
+
     match /stats/global {
       // Allow anyone to read the visit count
       allow read: if true;
       
       // Allow incrementing the visit count
-      // In a real app, we'd want to prevent abuse, but for a simple counter:
       allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['visitCount']) &&
                    request.resource.data.visitCount == resource.data.visitCount + 1;
       
       // Allow initial creation if it doesn't exist
       allow create: if request.resource.data.keys().hasOnly(['visitCount']) &&
                    request.resource.data.visitCount == 1;
+    }
+
+    match /exams/{examId} {
+      // Anyone can read a published exam (students need to fetch it by ID)
+      allow read: if true;
+      
+      // Only authenticated teachers can create/update their own exams
+      allow create: if isTeacher() && 
+                      request.resource.data.teacherId == request.auth.uid;
+      
+      allow update: if isTeacher() && 
+                      (resource.data.teacherId == request.auth.uid || isAdmin());
+      
+      allow delete: if isTeacher() && 
+                      (resource.data.teacherId == request.auth.uid || isAdmin());
+    }
+
+    match /results/{resultId} {
+      // Students can create results (submit their answers)
+      allow create: if request.resource.data.studentName is string &&
+                   request.resource.data.examId is string &&
+                   request.resource.data.score is number;
+      
+      // Only authenticated users (teachers) can read results
+      allow read: if isTeacher();
     }
   }
 }
