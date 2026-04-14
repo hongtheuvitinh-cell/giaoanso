@@ -37,7 +37,7 @@ import {
   SelectValue 
 } from "@/components/ui/select";
 import { MatrixRow, Question, QuestionType, QuestionLevel, Exam } from "@/types";
-import { generateExamPaper } from "@/lib/gemini";
+import { generateExamPaper, parseExistingExam } from "@/lib/gemini";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
@@ -390,6 +390,7 @@ export default function ExamGenerator({
   const [copied, setCopied] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
+  const [generatorMode, setGeneratorMode] = useState<"matrix" | "import">("matrix");
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -409,8 +410,13 @@ export default function ExamGenerator({
       return;
     }
 
-    if (useManualMatrix && matrixRows.length === 0) {
+    if (generatorMode === "matrix" && useManualMatrix && matrixRows.length === 0) {
       setError("Vui lòng thiết lập ma trận đề trước khi soạn đề hoặc tải lên file ma trận.");
+      return;
+    }
+
+    if (generatorMode === "import" && !sourceFile) {
+      setError("Vui lòng tải lên file đề thi hiện có để chuyển đổi.");
       return;
     }
 
@@ -418,21 +424,25 @@ export default function ExamGenerator({
     setError(null);
 
     try {
-      const matrixString = useManualMatrix ? JSON.stringify(matrixRows, null, 2) : null;
-      
       let sourceFileData = undefined;
       if (sourceFile) {
         const base64 = await fileToBase64(sourceFile);
         sourceFileData = { data: base64, mimeType: sourceFile.type };
       }
 
-      let matrixFileData = undefined;
-      if (matrixFile && !useManualMatrix) {
-        const base64 = await fileToBase64(matrixFile);
-        matrixFileData = { data: base64, mimeType: matrixFile.type };
+      let result;
+      if (generatorMode === "matrix") {
+        const matrixString = useManualMatrix ? JSON.stringify(matrixRows, null, 2) : null;
+        let matrixFileData = undefined;
+        if (matrixFile && !useManualMatrix) {
+          const base64 = await fileToBase64(matrixFile);
+          matrixFileData = { data: base64, mimeType: matrixFile.type };
+        }
+        result = await generateExamPaper(apiKey, matrixString, notes, sourceFileData, matrixFileData);
+      } else {
+        result = await parseExistingExam(apiKey, notes, sourceFileData);
       }
 
-      const result = await generateExamPaper(apiKey, matrixString, notes, sourceFileData, matrixFileData);
       const parsedExam: Exam = JSON.parse(result);
       setExamData(parsedExam);
       setPreviewMode(false);
@@ -608,50 +618,74 @@ export default function ExamGenerator({
       <div className="lg:col-span-4 space-y-6">
         <Card className="border-none shadow-sm overflow-hidden">
           <CardHeader className="bg-white border-b">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <FileUp className="w-5 h-5 text-blue-600" />
-              Nguồn câu hỏi & Lưu ý
-            </CardTitle>
-            <CardDescription>Tải lên tài liệu và thêm các yêu cầu riêng cho đề thi</CardDescription>
-          </CardHeader>
-          <CardContent className="p-6 space-y-6">
-            <div className="space-y-4">
-              <label className="text-sm font-semibold text-gray-700">Cấu trúc Ma trận</label>
-              <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+            <CardTitle className="text-lg flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <FileUp className="w-5 h-5 text-blue-600" />
+                Chế độ soạn đề
+              </div>
+              <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg w-full">
                 <button 
-                  onClick={() => setUseManualMatrix(true)}
-                  className={`py-2 text-xs font-medium rounded-md transition-all ${useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                  onClick={() => setGeneratorMode("matrix")}
+                  className={`py-2 text-xs font-medium rounded-md transition-all ${generatorMode === "matrix" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
                 >
-                  Dùng Ma trận đã nhập
+                  Soạn từ Ma trận
                 </button>
                 <button 
-                  onClick={() => setUseManualMatrix(false)}
-                  className={`py-2 text-xs font-medium rounded-md transition-all ${!useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                  onClick={() => setGeneratorMode("import")}
+                  className={`py-2 text-xs font-medium rounded-md transition-all ${generatorMode === "import" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
                 >
-                  Tải file Ma trận
+                  Nhập đề có sẵn
                 </button>
               </div>
-
-              {!useManualMatrix && (
-                <div className="relative group">
-                  <input 
-                    type="file" 
-                    accept=".pdf,.docx,.csv"
-                    onChange={(e) => setMatrixFile(e.target.files?.[0] || null)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                  />
-                  <div className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${matrixFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
-                    <FileUp className={`w-6 h-6 mx-auto mb-1 ${matrixFile ? 'text-blue-600' : 'text-gray-400'}`} />
-                    <p className="text-[10px] font-medium text-gray-600">
-                      {matrixFile ? matrixFile.name : "Chọn file Ma trận"}
-                    </p>
-                  </div>
+            </CardTitle>
+            <CardDescription>
+              {generatorMode === "matrix" 
+                ? "Tạo đề thi mới dựa trên cấu trúc ma trận và tài liệu nguồn" 
+                : "Chuyển đổi file đề thi hiện có (PDF/Word) thành đề thi trực tuyến"}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-6 space-y-6">
+            {generatorMode === "matrix" && (
+              <div className="space-y-4">
+                <label className="text-sm font-semibold text-gray-700">Cấu trúc Ma trận</label>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+                  <button 
+                    onClick={() => setUseManualMatrix(true)}
+                    className={`py-2 text-xs font-medium rounded-md transition-all ${useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Dùng Ma trận đã nhập
+                  </button>
+                  <button 
+                    onClick={() => setUseManualMatrix(false)}
+                    className={`py-2 text-xs font-medium rounded-md transition-all ${!useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Tải file Ma trận
+                  </button>
                 </div>
-              )}
-            </div>
+
+                {!useManualMatrix && (
+                  <div className="relative group">
+                    <input 
+                      type="file" 
+                      accept=".pdf,.docx,.csv"
+                      onChange={(e) => setMatrixFile(e.target.files?.[0] || null)}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <div className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${matrixFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
+                      <FileUp className={`w-6 h-6 mx-auto mb-1 ${matrixFile ? 'text-blue-600' : 'text-gray-400'}`} />
+                      <p className="text-[10px] font-medium text-gray-600">
+                        {matrixFile ? matrixFile.name : "Chọn file Ma trận"}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">Tải lên file Nội dung (Nguồn câu hỏi)</label>
+              <label className="text-sm font-semibold text-gray-700">
+                {generatorMode === "matrix" ? "Tải lên file Nội dung (Nguồn câu hỏi)" : "Tải lên file Đề thi hiện có"}
+              </label>
               <div className="relative group">
                 <input 
                   type="file" 
@@ -662,7 +696,7 @@ export default function ExamGenerator({
                 <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${sourceFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
                   <FileUp className={`w-8 h-8 mx-auto mb-2 ${sourceFile ? 'text-blue-600' : 'text-gray-400'}`} />
                   <p className="text-sm font-medium text-gray-600">
-                    {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file nguồn"}
+                    {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file đề/nguồn"}
                   </p>
                   <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
                 </div>
@@ -694,12 +728,12 @@ export default function ExamGenerator({
               {loading ? (
                 <>
                   <RefreshCw className="w-5 h-5 mr-2 animate-spin" />
-                  Đang soạn đề...
+                  {generatorMode === "matrix" ? "Đang soạn đề..." : "Đang chuyển đổi..."}
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-5 h-5 mr-2" />
-                  Soạn đề theo ma trận
+                  {generatorMode === "matrix" ? <Sparkles className="w-5 h-5 mr-2" /> : <CloudUpload className="w-5 h-5 mr-2" />}
+                  {generatorMode === "matrix" ? "Soạn đề theo ma trận" : "Chuyển đổi đề có sẵn"}
                 </>
               )}
             </Button>
