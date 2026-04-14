@@ -259,10 +259,10 @@ const QuestionItem = React.memo(({
                       <Checkbox 
                         checked={opt.isCorrect} 
                         onCheckedChange={(val) => {
-                          const newOpts = q.options!.map(o => 
+                          const newOpts = q.options!.map((o, i) => 
                             q.type === "MC" 
-                              ? { ...o, isCorrect: o.id === opt.id ? !!val : false }
-                              : o.id === opt.id ? { ...o, isCorrect: !!val } : o
+                              ? { ...o, isCorrect: i === optIdx ? !!val : false }
+                              : i === optIdx ? { ...o, isCorrect: !!val } : o
                           );
                           updateQuestion(q.id, { options: newOpts });
                         }}
