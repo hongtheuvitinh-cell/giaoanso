@@ -26,7 +26,8 @@ import {
   LogOut,
   LogIn,
   Settings,
-  ShieldCheck
+  ShieldCheck,
+  RotateCcw
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -106,9 +107,17 @@ export default function App() {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
       toast.success("Đăng nhập thành công!");
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error("Lỗi khi đăng nhập.");
+      let message = "Lỗi khi đăng nhập.";
+      if (err.code === "auth/unauthorized-domain") {
+        message = "Tên miền này chưa được cấp phép trong Firebase Console.";
+      } else if (err.message) {
+        message = `Lỗi: ${err.message}`;
+      }
+      toast.error(message, {
+        description: "Vui lòng kiểm tra cấu hình Authorized Domains trong Firebase."
+      });
     }
   };
 
@@ -119,6 +128,49 @@ export default function App() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleResetAll = () => {
+    if (!window.confirm("Bạn có chắc chắn muốn xóa toàn bộ dữ liệu phiên làm việc này? (Ma trận, đề thi đang soạn, nội dung giáo án... sẽ bị xóa sạch để bảo mật)")) return;
+    
+    // Reset Lesson Plan states
+    setTopic("");
+    setGrade("");
+    setDuration("45 phút");
+    setReferenceContent("");
+    setFramework("");
+    setPdfFile(null);
+    setLessonPlan(null);
+    setExistingLessonPlan("");
+    
+    // Reset Matrix states
+    setMatrixSubject("general");
+    setMatrixRows([
+      { 
+        id: "1", 
+        chapter: "Bài 7-Ứng phó tình huống nguy hiểm", 
+        content: "Tình huống nguy hiểm; Cách ứng phó", 
+        requirements: "Nêu được cách ứng phó trong các tình huống nguy hiểm thường gặp.",
+        mc: { know: 3, understand: 1, apply: 0, highApply: 0 },
+        tf: { know: 1, understand: 0, apply: 0, highApply: 0 },
+        sa: { know: 0, understand: 0, apply: 0, highApply: 0 },
+        essay: { know: 0, understand: 0, apply: 1, highApply: 0 },
+        physicsCompetency: PHYSICS_COMPETENCIES[0]
+      }
+    ]);
+    
+    // Reset Exam states
+    setExamNotes("");
+    setExamSourceFile(null);
+    setExamMatrixFile(null);
+    setUseManualMatrix(true);
+    setExamData(null);
+    
+    // Clear API Key
+    setUserApiKey("");
+    localStorage.removeItem("gemini_api_key");
+    
+    toast.success("Đã xóa sạch dữ liệu phiên làm việc.");
   };
 
   // Visit Counter Logic
@@ -376,6 +428,15 @@ export default function App() {
             
             {user ? (
               <div className="flex items-center gap-2">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-8 rounded-full gap-2 text-red-500 hover:text-red-600 hover:bg-red-50" 
+                  onClick={handleResetAll}
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Xóa dữ liệu
+                </Button>
                 <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100">
                   {userProfile?.role === "admin" ? (
                     <ShieldCheck className="w-3 h-3 text-emerald-600" />
@@ -392,10 +453,21 @@ export default function App() {
                 </Button>
               </div>
             ) : (
-              <Button variant="outline" size="sm" className="h-8 rounded-full gap-2" onClick={handleLogin}>
-                <LogIn className="w-3 h-3" />
-                Đăng nhập GV
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-8 rounded-full gap-2 text-gray-400 hover:text-red-500 hover:bg-red-50" 
+                  onClick={handleResetAll}
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Xóa dữ liệu
+                </Button>
+                <Button variant="outline" size="sm" className="h-8 rounded-full gap-2" onClick={handleLogin}>
+                  <LogIn className="w-3 h-3" />
+                  Đăng nhập GV
+                </Button>
+              </div>
             )}
           </div>
         </div>
