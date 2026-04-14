@@ -126,6 +126,7 @@ export default function StudentExam() {
         studentName,
         examId: exam.id,
         examTitle: exam.title,
+        teacherId: exam.teacherId,
         score,
         totalQuestions: exam.questions.length,
         correctAnswers: correctCount,
