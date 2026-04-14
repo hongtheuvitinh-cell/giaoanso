@@ -165,7 +165,7 @@ Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có
       "level": "know" | "understand" | "apply" | "highApply",
       "content": "Nội dung câu hỏi",
       "options": [ // Chỉ dành cho MC và TF
-        { "id": "A", "text": "Nội dung phương án", "isCorrect": boolean }
+        { "id": "string", "text": "Nội dung phương án", "isCorrect": boolean }
       ],
       "correctAnswer": "string", // Dành cho SA
       "explanation": "Giải thích chi tiết",
@@ -175,8 +175,8 @@ Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có
 }
 
 Lưu ý: 
-- MC: Trắc nghiệm 4 lựa chọn (A, B, C, D).
-- TF: Trắc nghiệm Đúng/Sai theo định dạng mới. Một câu hỏi lớn có 4 ý (a, b, c, d). "options" phải chứa đúng 4 phần tử tương ứng với 4 ý này. Mỗi phần tử trong "options" có "text" là nội dung của ý đó và "isCorrect" là true nếu ý đó ĐÚNG, false nếu ý đó SAI.
+- MC: Trắc nghiệm 4 lựa chọn. "options" phải có 4 phần tử với "id" lần lượt là "A", "B", "C", "D".
+- TF: Trắc nghiệm Đúng/Sai theo định dạng mới. Một câu hỏi lớn có 4 ý (a, b, c, d). "options" phải chứa đúng 4 phần tử tương ứng với 4 ý này. "id" của các ý lần lượt là "a", "b", "c", "d". "text" là nội dung của ý đó và "isCorrect" là true nếu ý đó ĐÚNG, false nếu ý đó SAI.
 - SA: Trả lời ngắn.
 - ESSAY: Tự luận.
 `;
