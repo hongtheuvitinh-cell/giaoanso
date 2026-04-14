@@ -220,17 +220,22 @@ export const parseExistingExam = async (
 ) => {
   const ai = new GoogleGenAI({ apiKey });
   const prompt = `
-Hãy đóng vai một chuyên gia số hóa học liệu. Nhiệm vụ của bạn là chuyển đổi một đề kiểm tra hiện có (từ file đính kèm) thành định dạng JSON để sử dụng trên hệ thống thi trực tuyến.
+Hãy đóng vai một chuyên gia số hóa học liệu cực kỳ cẩn thận. Nhiệm vụ của bạn là chuyển đổi TOÀN BỘ một đề kiểm tra hiện có (từ file đính kèm) thành định dạng JSON để sử dụng trên hệ thống thi trực tuyến.
+
+YÊU CẦU QUAN TRỌNG NHẤT:
+- KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu hỏi nào có trong file. 
+- Nếu đề thi có nhiều phần (Trắc nghiệm, Tự luận, Đúng/Sai...), bạn phải trích xuất ĐẦY ĐỦ tất cả các phần đó.
+- Đảm bảo tính toàn vẹn của nội dung câu hỏi và các phương án lựa chọn.
 
 YÊU CẦU CHI TIẾT:
-1. Phân tích file đính kèm để trích xuất toàn bộ các câu hỏi.
+1. Phân tích file đính kèm để trích xuất TOÀN BỘ danh sách câu hỏi.
 2. Xác định loại câu hỏi cho từng câu:
    - MC: Trắc nghiệm 4 lựa chọn (A, B, C, D).
    - TF: Trắc nghiệm Đúng/Sai (thường có 4 ý a, b, c, d).
    - SA: Trả lời ngắn.
    - ESSAY: Tự luận.
-3. Cố gắng xác định mức độ (know, understand, apply, highApply) dựa trên nội dung câu hỏi.
-4. ${notes ? `LƯU Ý THÊM: ${notes}` : ""}
+3. Xác định mức độ (know, understand, apply, highApply) dựa trên nội dung câu hỏi.
+4. ${notes ? `LƯU Ý THÊM TỪ GIÁO VIÊN: ${notes}` : ""}
 
 YÊU CẦU ĐỊNH DẠNG ĐẦU RA (QUAN TRỌNG):
 Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có markdown code blocks) theo cấu trúc sau:
