@@ -10,6 +10,38 @@ export interface MatrixRow {
   physicsCompetency?: string;
 }
 
+export type QuestionType = "MC" | "TF" | "SA" | "ESSAY";
+export type QuestionLevel = "know" | "understand" | "apply" | "highApply";
+
+export interface QuestionOption {
+  id: string;
+  text: string;
+  isCorrect: boolean;
+}
+
+export interface Question {
+  id: string;
+  type: QuestionType;
+  level: QuestionLevel;
+  content: string;
+  imageUrl?: string;
+  options?: QuestionOption[]; // For MC and TF
+  correctAnswer?: string; // For SA
+  explanation?: string;
+  points?: number;
+}
+
+export interface Exam {
+  id: string;
+  title: string;
+  subject: string;
+  grade: string;
+  timeLimit: number; // in minutes
+  questions: Question[];
+  createdAt: string;
+  teacherId: string;
+}
+
 export const PHYSICS_COMPETENCIES = [
   "Nhận thức vật lý",
   "Tìm hiểu thế giới tự nhiên dưới góc độ vật lý",
