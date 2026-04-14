@@ -11,12 +11,68 @@
         }
       },
       "required": ["visitCount"]
+    },
+    "exam": {
+      "title": "Exam",
+      "description": "A structured exam with questions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "grade": { "type": "string" },
+        "timeLimit": { "type": "number" },
+        "questions": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "teacherId": { "type": "string" }
+      },
+      "required": ["id", "title", "questions", "createdAt"]
+    },
+    "examResult": {
+      "title": "Exam Result",
+      "description": "A student's result for an exam",
+      "type": "object",
+      "properties": {
+        "studentName": { "type": "string" },
+        "examId": { "type": "string" },
+        "score": { "type": "number" },
+        "totalQuestions": { "type": "number" },
+        "correctAnswers": { "type": "number" },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "answers": { "type": "object" }
+      },
+      "required": ["studentName", "examId", "score", "submittedAt"]
+    },
+    "user": {
+      "title": "User Profile",
+      "description": "User information and role",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "teacher", "pending"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
     }
   },
   "firestore": {
     "stats/global": {
       "schema": "stats",
       "description": "Global statistics document"
+    },
+    "exams/{examId}": {
+      "schema": "exam",
+      "description": "Collection of published exams"
+    },
+    "results/{resultId}": {
+      "schema": "examResult",
+      "description": "Collection of student exam results"
+    },
+    "users/{uid}": {
+      "schema": "user",
+      "description": "User profiles and roles"
     }
   }
 }
