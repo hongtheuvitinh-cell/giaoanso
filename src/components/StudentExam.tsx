@@ -111,8 +111,8 @@ export default function StudentExam() {
           if (correctOpt && studentAnswer === correctOpt.id) correctCount++;
         } else if (q.type === "TF") {
           // Simplified TF check
-          const allCorrect = q.options?.every(opt => {
-            const studentVal = studentAnswer?.[opt.id] || false;
+          const allCorrect = q.options?.every((opt, optIdx) => {
+            const studentVal = studentAnswer?.[`opt_${optIdx}`] || false;
             return studentVal === opt.isCorrect;
           });
           if (allCorrect) correctCount++;
@@ -275,18 +275,18 @@ export default function StudentExam() {
                             </span>
                             <div className="flex gap-2">
                               <Button 
-                                variant={answers[currentQuestion.id]?.[opt.id] === true ? "default" : "outline"}
+                                variant={answers[currentQuestion.id]?.[`opt_${optIdx}`] === true ? "default" : "outline"}
                                 size="sm"
-                                className={`flex-1 sm:flex-none h-8 text-xs ${answers[currentQuestion.id]?.[opt.id] === true ? 'bg-green-600 hover:bg-green-700' : ''}`}
-                                onClick={() => handleAnswerChange(currentQuestion.id, { ...answers[currentQuestion.id], [opt.id]: true })}
+                                className={`flex-1 sm:flex-none h-8 text-xs ${answers[currentQuestion.id]?.[`opt_${optIdx}`] === true ? 'bg-green-600 hover:bg-green-700' : ''}`}
+                                onClick={() => handleAnswerChange(currentQuestion.id, { ...answers[currentQuestion.id], [`opt_${optIdx}`]: true })}
                               >
                                 Đúng
                               </Button>
                               <Button 
-                                variant={answers[currentQuestion.id]?.[opt.id] === false ? "default" : "outline"}
+                                variant={answers[currentQuestion.id]?.[`opt_${optIdx}`] === false ? "default" : "outline"}
                                 size="sm"
-                                className={`flex-1 sm:flex-none h-8 text-xs ${answers[currentQuestion.id]?.[opt.id] === false ? 'bg-red-600 hover:bg-red-700' : ''}`}
-                                onClick={() => handleAnswerChange(currentQuestion.id, { ...answers[currentQuestion.id], [opt.id]: false })}
+                                className={`flex-1 sm:flex-none h-8 text-xs ${answers[currentQuestion.id]?.[`opt_${optIdx}`] === false ? 'bg-red-600 hover:bg-red-700' : ''}`}
+                                onClick={() => handleAnswerChange(currentQuestion.id, { ...answers[currentQuestion.id], [`opt_${optIdx}`]: false })}
                               >
                                 Sai
                               </Button>
