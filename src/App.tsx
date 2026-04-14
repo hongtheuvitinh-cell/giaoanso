@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   BookOpen, 
@@ -21,7 +21,12 @@ import {
   FileText,
   FileUp,
   FileDown,
-  Table as TableIcon
+  Table as TableIcon,
+  User,
+  LogOut,
+  LogIn,
+  Settings,
+  ShieldCheck
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -35,15 +40,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { generateLessonPlan } from "@/lib/gemini";
+import { generateLessonPlan, integrateDigitalCompetency } from "@/lib/gemini";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table } from "docx";
 import { saveAs } from "file-saver";
 import MatrixGenerator from "@/components/MatrixGenerator";
-import { MatrixRow, PHYSICS_COMPETENCIES } from "./types";
+import { MatrixRow, PHYSICS_COMPETENCIES, Exam } from "./types";
 import ExamGenerator from "@/components/ExamGenerator";
+import StudentExam from "@/components/StudentExam";
+import ExamManagement from "@/components/ExamManagement";
 import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
-import { useEffect } from "react";
-import { db, doc, getDoc, setDoc, updateDoc, increment, onSnapshot } from "@/lib/firebase";
+import { db, doc, getDoc, setDoc, updateDoc, increment, onSnapshot, auth } from "@/lib/firebase";
+import { Toaster } from "@/components/ui/sonner";
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
+import { toast } from "sonner";
 
 export default function App() {
   const [topic, setTopic] = useState("");
@@ -58,6 +67,59 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [visitCount, setVisitCount] = useState<number | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState("lesson-plan");
+  const [lessonPlanMode, setLessonPlanMode] = useState<"create" | "integrate">("create");
+  const [existingLessonPlan, setExistingLessonPlan] = useState("");
+
+  // Auth Logic
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setUser(user);
+      if (user) {
+        // Fetch or create user profile
+        const userDocRef = doc(db, "users", user.uid);
+        const userSnap = await getDoc(userDocRef);
+        if (userSnap.exists()) {
+          setUserProfile(userSnap.data());
+        } else {
+          const newProfile = {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            role: user.email === "trieuhaminh@gmail.com" ? "admin" : "pending",
+            createdAt: new Date().toISOString()
+          };
+          await setDoc(userDocRef, newProfile);
+          setUserProfile(newProfile);
+        }
+      } else {
+        setUserProfile(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      toast.success("Đăng nhập thành công!");
+    } catch (err) {
+      console.error(err);
+      toast.error("Lỗi khi đăng nhập.");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      toast.success("Đã đăng xuất.");
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   // Visit Counter Logic
   useEffect(() => {
@@ -113,7 +175,7 @@ export default function App() {
   const [examSourceFile, setExamSourceFile] = useState<File | null>(null);
   const [examMatrixFile, setExamMatrixFile] = useState<File | null>(null);
   const [useManualMatrix, setUseManualMatrix] = useState(true);
-  const [examContent, setExamContent] = useState<string | null>(null);
+  const [examData, setExamData] = useState<Exam | null>(null);
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -133,7 +195,9 @@ export default function App() {
   };
 
   const handleGenerate = async () => {
-    if (!topic) return;
+    if (lessonPlanMode === "create" && !topic) return;
+    if (lessonPlanMode === "integrate" && !existingLessonPlan && !pdfFile) return;
+    
     if (!userApiKey) {
       setError("Vui lòng nhập Gemini API Key ở góc trên bên phải để tiếp tục.");
       return;
@@ -141,12 +205,23 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      let pdfData = undefined;
-      if (pdfFile) {
-        const base64 = await fileToBase64(pdfFile);
-        pdfData = { data: base64, mimeType: pdfFile.type };
+      let result;
+      if (lessonPlanMode === "create") {
+        let pdfData = undefined;
+        if (pdfFile) {
+          const base64 = await fileToBase64(pdfFile);
+          pdfData = { data: base64, mimeType: pdfFile.type };
+        }
+        result = await generateLessonPlan(userApiKey, topic, grade, duration, referenceContent, framework, pdfData);
+      } else {
+        let pdfData = undefined;
+        if (pdfFile) {
+          const base64 = await fileToBase64(pdfFile);
+          pdfData = { data: base64, mimeType: pdfFile.type };
+        }
+        result = await integrateDigitalCompetency(userApiKey, existingLessonPlan, framework, pdfData);
       }
-      const result = await generateLessonPlan(userApiKey, topic, grade, duration, referenceContent, framework, pdfData);
+      
       if (result) {
         setLessonPlan(result);
       } else {
@@ -154,7 +229,7 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
-      setError("Đã xảy ra lỗi trong quá trình tạo giáo án.");
+      setError("Đã xảy ra lỗi trong quá trình xử lý giáo án.");
     } finally {
       setLoading(false);
     }
@@ -263,6 +338,19 @@ export default function App() {
     }
   };
 
+  const handleDuplicateExam = (exam: Exam) => {
+    // Create a new exam object based on the existing one
+    const duplicatedExam: Exam = {
+      ...exam,
+      id: Math.random().toString(36).substring(2, 9).toUpperCase(),
+      title: `${exam.title} (Bản sao)`,
+      createdAt: new Date().toISOString(),
+    };
+    setExamData(duplicatedExam);
+    setActiveTab("exam");
+    toast.success("Đã sao chép đề thi. Bạn có thể chỉnh sửa và xuất bản bản mới.");
+  };
+
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#1A1A1A] font-sans selection:bg-blue-100">
       {/* Header */}
@@ -280,18 +368,41 @@ export default function App() {
               <input 
                 type="password" 
                 placeholder="Nhập Gemini API Key..." 
-                className="bg-transparent border-none outline-none text-xs w-32 focus:w-48 transition-all"
+                className="bg-transparent border-none outline-none text-xs w-24 focus:w-32 transition-all"
                 value={userApiKey}
                 onChange={(e) => handleSaveKey(e.target.value)}
               />
             </div>
-            <span className="hidden sm:inline">Hỗ trợ AI soạn giáo án năng lực số</span>
+            
+            {user ? (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100">
+                  {userProfile?.role === "admin" ? (
+                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                  ) : (
+                    <User className="w-3 h-3 text-blue-600" />
+                  )}
+                  <span className="text-xs text-blue-700 max-w-[100px] truncate">
+                    {userProfile?.role === "pending" ? "[Chờ duyệt] " : ""}
+                    {user.displayName || user.email}
+                  </span>
+                </div>
+                <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={handleLogout}>
+                  <LogOut className="w-4 h-4 text-gray-400" />
+                </Button>
+              </div>
+            ) : (
+              <Button variant="outline" size="sm" className="h-8 rounded-full gap-2" onClick={handleLogin}>
+                <LogIn className="w-3 h-3" />
+                Đăng nhập GV
+              </Button>
+            )}
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8 md:py-12">
-        <Tabs defaultValue="lesson-plan" className="space-y-8">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
           <div className="flex justify-center">
             <TabsList className="bg-white border border-gray-200 p-1 rounded-xl shadow-sm">
               <TabsTrigger value="lesson-plan" className="px-8 py-2 rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
@@ -306,6 +417,16 @@ export default function App() {
                 <FileText className="w-4 h-4 mr-2" />
                 Soạn đề kiểm tra
               </TabsTrigger>
+              <TabsTrigger value="student" className="px-8 py-2 rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+                <GraduationCap className="w-4 h-4 mr-2" />
+                Khu vực Học sinh
+              </TabsTrigger>
+              {(userProfile?.role === "admin" || userProfile?.role === "teacher") && (
+                <TabsTrigger value="management" className="px-8 py-2 rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+                  <Settings className="w-4 h-4 mr-2" />
+                  Quản lý
+                </TabsTrigger>
+              )}
             </TabsList>
           </div>
 
@@ -323,112 +444,179 @@ export default function App() {
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-blue-600" />
-                    Thông tin bài học
+                    Soạn giáo án & Năng lực số
                   </CardTitle>
                   <CardDescription>
-                    Nhập thông tin cơ bản để AI phát sinh giáo án tích hợp năng lực số.
+                    Tạo mới giáo án hoặc lồng ghép năng lực số vào giáo án đã có.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700">Tên bài học / Chủ đề</label>
-                    <Textarea 
-                      placeholder="Ví dụ: Hệ mặt trời, Các phép tính số học, Lịch sử triều Nguyễn..."
-                      className="min-h-[100px] resize-none focus-visible:ring-blue-500"
-                      value={topic}
-                      onChange={(e) => setTopic(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-gray-700">Khối lớp</label>
-                      <Input 
-                        placeholder="Ví dụ: Lớp 6"
-                        value={grade}
-                        onChange={(e) => setGrade(e.target.value)}
-                        className="focus-visible:ring-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-gray-700">Thời lượng</label>
-                      <Input 
-                        placeholder="Ví dụ: 45 phút"
-                        value={duration}
-                        onChange={(e) => setDuration(e.target.value)}
-                        className="focus-visible:ring-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  <Tabs defaultValue="text" className="w-full">
+                  <Tabs value={lessonPlanMode} onValueChange={(val: any) => setLessonPlanMode(val)} className="w-full">
                     <TabsList className="grid w-full grid-cols-2 mb-4">
-                      <TabsTrigger value="text" className="flex items-center gap-2">
-                        <FileText className="w-4 h-4" />
-                        Văn bản
-                      </TabsTrigger>
-                      <TabsTrigger value="pdf" className="flex items-center gap-2">
-                        <FileUp className="w-4 h-4" />
-                        File PDF
-                      </TabsTrigger>
+                      <TabsTrigger value="create" className="text-xs">Soạn mới</TabsTrigger>
+                      <TabsTrigger value="integrate" className="text-xs">Lồng Năng lực số</TabsTrigger>
                     </TabsList>
-                    
-                    <TabsContent value="text" className="space-y-4">
+
+                    <TabsContent value="create" className="space-y-4">
                       <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700">Nội dung tham khảo (từ PDF/Sách)</label>
+                        <label className="text-sm font-medium text-gray-700">Tên bài học / Chủ đề</label>
                         <Textarea 
-                          placeholder="Dán nội dung bài học từ file PDF của bạn vào đây..."
-                          className="min-h-[120px] resize-none focus-visible:ring-blue-500 text-sm"
-                          value={referenceContent}
-                          onChange={(e) => setReferenceContent(e.target.value)}
+                          placeholder="Ví dụ: Hệ mặt trời, Các phép tính số học, Lịch sử triều Nguyễn..."
+                          className="min-h-[80px] resize-none focus-visible:ring-blue-500"
+                          value={topic}
+                          onChange={(e) => setTopic(e.target.value)}
                         />
                       </div>
-                    </TabsContent>
-                    
-                    <TabsContent value="pdf" className="space-y-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700">Chọn file PDF bài học</label>
-                        <div className="flex items-center justify-center w-full">
-                          <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-all">
-                            <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                              <FileUp className="w-8 h-8 mb-3 text-gray-400" />
-                              <p className="mb-2 text-sm text-gray-500">
-                                <span className="font-semibold">Click để tải lên</span> hoặc kéo thả
-                              </p>
-                              <p className="text-xs text-gray-400">PDF (Tối đa 10MB)</p>
-                            </div>
-                            <input 
-                              type="file" 
-                              className="hidden" 
-                              accept=".pdf" 
-                              onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
-                            />
-                          </label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Khối lớp</label>
+                          <Input 
+                            placeholder="Ví dụ: Lớp 6"
+                            value={grade}
+                            onChange={(e) => setGrade(e.target.value)}
+                            className="focus-visible:ring-blue-500"
+                          />
                         </div>
-                        {pdfFile && (
-                          <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-md border border-blue-100">
-                            <FileText className="w-4 h-4 text-blue-600" />
-                            <span className="text-xs text-blue-800 truncate max-w-[200px] font-medium">
-                              {pdfFile.name}
-                            </span>
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              className="ml-auto h-6 w-6 p-0 text-blue-600 hover:text-blue-800"
-                              onClick={() => setPdfFile(null)}
-                            >
-                              ×
-                            </Button>
-                          </div>
-                        )}
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Thời lượng</label>
+                          <Input 
+                            placeholder="Ví dụ: 45 phút"
+                            value={duration}
+                            onChange={(e) => setDuration(e.target.value)}
+                            className="focus-visible:ring-blue-500"
+                          />
+                        </div>
                       </div>
+
+                      <Tabs defaultValue="text" className="w-full">
+                        <TabsList className="grid w-full grid-cols-2 mb-2">
+                          <TabsTrigger value="text" className="text-xs flex items-center gap-1">
+                            <FileText className="w-3 h-3" />
+                            Văn bản
+                          </TabsTrigger>
+                          <TabsTrigger value="pdf" className="text-xs flex items-center gap-1">
+                            <FileUp className="w-3 h-3" />
+                            File PDF
+                          </TabsTrigger>
+                        </TabsList>
+                        
+                        <TabsContent value="text" className="space-y-2">
+                          <label className="text-xs font-medium text-gray-500">Nội dung tham khảo (từ PDF/Sách)</label>
+                          <Textarea 
+                            placeholder="Dán nội dung bài học từ file PDF của bạn vào đây..."
+                            className="min-h-[100px] resize-none focus-visible:ring-blue-500 text-sm"
+                            value={referenceContent}
+                            onChange={(e) => setReferenceContent(e.target.value)}
+                          />
+                        </TabsContent>
+                        
+                        <TabsContent value="pdf" className="space-y-2">
+                          <div className="flex items-center justify-center w-full">
+                            <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-all">
+                              <div className="flex flex-col items-center justify-center pt-2 pb-2">
+                                <FileUp className="w-6 h-6 mb-1 text-gray-400" />
+                                <p className="text-xs text-gray-500">
+                                  <span className="font-semibold">Tải PDF</span>
+                                </p>
+                              </div>
+                              <input 
+                                type="file" 
+                                className="hidden" 
+                                accept=".pdf" 
+                                onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+                              />
+                            </label>
+                          </div>
+                          {pdfFile && (
+                            <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-md border border-blue-100">
+                              <FileText className="w-3 h-3 text-blue-600" />
+                              <span className="text-[10px] text-blue-800 truncate max-w-[150px]">
+                                {pdfFile.name}
+                              </span>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="ml-auto h-5 w-5 p-0"
+                                onClick={() => setPdfFile(null)}
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          )}
+                        </TabsContent>
+                      </Tabs>
+                    </TabsContent>
+
+                    <TabsContent value="integrate" className="space-y-4">
+                      <Tabs defaultValue="paste" className="w-full">
+                        <TabsList className="grid w-full grid-cols-2 mb-2">
+                          <TabsTrigger value="paste" className="text-xs flex items-center gap-1">
+                            <FileText className="w-3 h-3" />
+                            Dán văn bản
+                          </TabsTrigger>
+                          <TabsTrigger value="pdf-upload" className="text-xs flex items-center gap-1">
+                            <FileUp className="w-3 h-3" />
+                            Tải PDF
+                          </TabsTrigger>
+                        </TabsList>
+
+                        <TabsContent value="paste" className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Dán giáo án cũ của bạn</label>
+                          <Textarea 
+                            placeholder="Dán toàn bộ nội dung giáo án cũ (KHBD) của bạn vào đây để AI lồng ghép thêm năng lực số..."
+                            className="min-h-[200px] resize-none focus-visible:ring-blue-500 text-sm"
+                            value={existingLessonPlan}
+                            onChange={(e) => setExistingLessonPlan(e.target.value)}
+                          />
+                        </TabsContent>
+
+                        <TabsContent value="pdf-upload" className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Tải file PDF giáo án cũ</label>
+                          <div className="flex items-center justify-center w-full">
+                            <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-all">
+                              <div className="flex flex-col items-center justify-center pt-4 pb-4">
+                                <FileUp className="w-8 h-8 mb-2 text-gray-400" />
+                                <p className="text-xs text-gray-500">
+                                  <span className="font-semibold">Click để tải PDF giáo án</span>
+                                </p>
+                              </div>
+                              <input 
+                                type="file" 
+                                className="hidden" 
+                                accept=".pdf" 
+                                onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+                              />
+                            </label>
+                          </div>
+                          {pdfFile && (
+                            <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-md border border-blue-100">
+                              <FileText className="w-4 h-4 text-blue-600" />
+                              <span className="text-xs text-blue-800 truncate max-w-[200px]">
+                                {pdfFile.name}
+                              </span>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="ml-auto h-6 w-6 p-0"
+                                onClick={() => setPdfFile(null)}
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          )}
+                        </TabsContent>
+                      </Tabs>
+                      <p className="text-[10px] text-gray-400 italic">
+                        * AI sẽ tự động phân tích các hoạt động và chèn thêm cột/nội dung Năng lực số phù hợp.
+                      </p>
                     </TabsContent>
                   </Tabs>
 
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700">Yêu cầu bổ sung (nếu có)</label>
                     <Textarea 
-                      placeholder="Nhập thêm các yêu cầu riêng về năng lực số hoặc lưu ý khác..."
-                      className="min-h-[80px] resize-none focus-visible:ring-blue-500 text-sm"
+                      placeholder="Ví dụ: Lồng ghép NLS vào cột Sản phẩm, hoặc thêm cột riêng..."
+                      className="min-h-[60px] resize-none focus-visible:ring-blue-500 text-sm"
                       value={framework}
                       onChange={(e) => setFramework(e.target.value)}
                     />
@@ -438,16 +626,16 @@ export default function App() {
                   <Button 
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white transition-all"
                     onClick={handleGenerate}
-                    disabled={loading || !topic}
+                    disabled={loading || (lessonPlanMode === "create" ? !topic : (!existingLessonPlan && !pdfFile))}
                   >
                     {loading ? (
                       <>
                         <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                        Đang soạn thảo...
+                        Đang xử lý...
                       </>
                     ) : (
                       <>
-                        Tạo giáo án ngay
+                        {lessonPlanMode === "create" ? "Tạo giáo án ngay" : "Lồng ghép Năng lực số"}
                         <ChevronRight className="w-4 h-4 ml-1" />
                       </>
                     )}
@@ -483,7 +671,7 @@ export default function App() {
                   </div>
                   <h3 className="text-lg font-medium text-gray-900">Sẵn sàng hỗ trợ bạn</h3>
                   <p className="text-gray-500 max-w-xs mt-2">
-                    Nhập thông tin bài học bên trái để bắt đầu tạo giáo án chuyên nghiệp.
+                    Chọn chế độ "Soạn mới" hoặc "Lồng Năng lực số" ở bên trái để bắt đầu.
                   </p>
                 </motion.div>
               )}
@@ -602,12 +790,21 @@ export default function App() {
             setMatrixFile={setExamMatrixFile}
             useManualMatrix={useManualMatrix}
             setUseManualMatrix={setUseManualMatrix}
-            examContent={examContent}
-            setExamContent={setExamContent}
+            examData={examData}
+            setExamData={setExamData}
           />
+        </TabsContent>
+
+        <TabsContent value="student">
+          <StudentExam />
+        </TabsContent>
+
+        <TabsContent value="management">
+          <ExamManagement userProfile={userProfile} onDuplicate={handleDuplicateExam} />
         </TabsContent>
       </Tabs>
     </main>
+    <Toaster position="top-center" richColors />
 
       <footer className="max-w-7xl mx-auto px-4 py-8 border-t border-gray-200 mt-12">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
@@ -642,7 +839,12 @@ export default function App() {
                     <ol className="text-sm text-gray-600 list-decimal pl-5 space-y-2">
                       <li><strong>Thiết lập Ma trận:</strong> Nhập các chủ đề, nội dung và số lượng câu hỏi theo 4 mức độ (B-H-V-VC).</li>
                       <li><strong>Soạn đề thi:</strong> Tải lên file nguồn kiến thức (nếu có) và nhấn "Soạn đề" để AI tạo đề dựa trên ma trận.</li>
-                      <li><strong>Soạn giáo án:</strong> Nhập tên bài học, chọn khung năng lực số và nhấn "Soạn giáo án" để tạo KHBD chuẩn 5512.</li>
+                      <li><strong>Soạn giáo án:</strong> 
+                        <ul className="list-disc pl-5 mt-1">
+                          <li><em>Soạn mới:</em> Nhập tên bài học và AI sẽ tạo KHBD chuẩn 5512 tích hợp NLS.</li>
+                          <li><em>Lồng Năng lực số:</em> Dán giáo án cũ của bạn và AI sẽ tự động chèn thêm các yêu cầu Năng lực số vào nội dung.</li>
+                        </ul>
+                      </li>
                       <li><strong>Xuất bản:</strong> Tải về định dạng Word (.docx) hoặc PDF để sử dụng.</li>
                     </ol>
                   </section>
