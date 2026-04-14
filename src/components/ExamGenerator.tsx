@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   FileText, 
@@ -10,22 +10,349 @@ import {
   RefreshCw,
   AlertCircle,
   Copy,
-  Check
+  Check,
+  Plus,
+  Trash2,
+  Edit2,
+  Save,
+  X,
+  Eye,
+  CloudUpload,
+  Image as ImageIcon,
+  ImageOff
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MatrixRow } from "@/types";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
+import { MatrixRow, Question, QuestionType, QuestionLevel, Exam } from "@/types";
 import { generateExamPaper } from "@/lib/gemini";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table } from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, AlignmentType } from "docx";
 import { saveAs } from "file-saver";
 import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
+import { db, doc, setDoc, auth, handleFirestoreError, OperationType } from "@/lib/firebase";
+import { toast } from "sonner";
+
+// --- Sub-components for performance ---
+
+const QuestionItem = React.memo(({ 
+  q, 
+  idx, 
+  editingId, 
+  setEditingId, 
+  updateQuestion, 
+  deleteQuestion,
+  previewMode 
+}: { 
+  q: Question, 
+  idx: number, 
+  editingId: string | null, 
+  setEditingId: (id: string | null) => void,
+  updateQuestion: (id: string, updates: Partial<Question>) => void,
+  deleteQuestion: (id: string) => void,
+  previewMode: boolean
+}) => {
+  const [localContent, setLocalContent] = useState(q.content);
+  const [debouncedContent, setDebouncedContent] = useState(q.content);
+
+  useEffect(() => {
+    setLocalContent(q.content);
+    setDebouncedContent(q.content);
+  }, [q.id]); // Only reset when switching questions, not on every content update from parent
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedContent(localContent);
+      if (localContent !== q.content) {
+        updateQuestion(q.id, { content: localContent });
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [localContent]);
+
+  if (previewMode) {
+    return (
+      <Card className="border-none shadow-sm">
+        <CardContent className="p-6">
+          <div className="flex justify-between items-start mb-4">
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-100">
+              Câu {idx + 1}
+            </Badge>
+          </div>
+          <div className="space-y-4">
+            <div className="prose prose-sm max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                {q.content}
+              </ReactMarkdown>
+            </div>
+            {q.imageUrl && (
+              <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border border-gray-100 max-h-64 object-contain" referrerPolicy="no-referrer" />
+            )}
+            {(q.type === "MC" || q.type === "TF") && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 ml-4">
+                {q.options?.map((opt, oIdx) => (
+                  <div key={opt.id} className={`p-3 rounded-xl border flex gap-3 ${opt.isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-gray-100'}`}>
+                    <span className="font-bold">{q.type === "TF" ? String.fromCharCode(97 + oIdx) : opt.id}.</span>
+                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                      {opt.text}
+                    </ReactMarkdown>
+                  </div>
+                ))}
+              </div>
+            )}
+            {q.type === "SA" && (
+              <div className="ml-4 p-3 bg-blue-50 rounded-xl border border-blue-100 text-blue-700 flex gap-2">
+                <span className="font-bold">Đáp án:</span>
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  {q.correctAnswer || ""}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className={`border-none shadow-sm transition-all ${editingId === q.id ? 'ring-2 ring-blue-500' : ''}`}>
+      <CardContent className="p-6">
+        <div className="flex justify-between items-start mb-4">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-100">
+              Câu {idx + 1}
+            </Badge>
+            <Badge variant="secondary" className="text-[10px] uppercase">
+              {q.type}
+            </Badge>
+            <Badge variant="secondary" className="text-[10px] uppercase bg-orange-50 text-orange-700 border-orange-100">
+              {q.level}
+            </Badge>
+          </div>
+          <div className="flex gap-1">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-blue-600" onClick={() => setEditingId(editingId === q.id ? null : q.id)}>
+              {editingId === q.id ? <Check className="h-4 w-4" /> : <Edit2 className="h-4 w-4" />}
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600" onClick={() => deleteQuestion(q.id)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+
+        {editingId === q.id ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Loại câu hỏi</label>
+                <Select value={q.type} onValueChange={(val: QuestionType) => updateQuestion(q.id, { type: val })}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MC">Trắc nghiệm</SelectItem>
+                    <SelectItem value="TF">Đúng / Sai</SelectItem>
+                    <SelectItem value="SA">Trả lời ngắn</SelectItem>
+                    <SelectItem value="ESSAY">Tự luận</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Mức độ</label>
+                <Select value={q.level} onValueChange={(val: QuestionLevel) => updateQuestion(q.id, { level: val })}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="know">Biết</SelectItem>
+                    <SelectItem value="understand">Hiểu</SelectItem>
+                    <SelectItem value="apply">Vận dụng</SelectItem>
+                    <SelectItem value="highApply">Vận dụng cao</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Nội dung câu hỏi (Hỗ trợ Latex $...$)</label>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-6 text-[10px] text-blue-600"
+                  onClick={() => {
+                    const url = window.prompt("Nhập URL hình ảnh minh họa:");
+                    if (url !== null) updateQuestion(q.id, { imageUrl: url });
+                  }}
+                >
+                  <ImageIcon className="w-3 h-3 mr-1" /> {q.imageUrl ? "Đổi ảnh" : "Thêm ảnh"}
+                </Button>
+              </div>
+              <Textarea 
+                value={localContent} 
+                onChange={(e) => setLocalContent(e.target.value)}
+                className="min-h-[80px] text-sm font-mono"
+                placeholder="Nhập nội dung câu hỏi. Ví dụ: Tính giá trị của $x$ trong phương trình $x^2 + 2x + 1 = 0$"
+              />
+              {q.imageUrl && (
+                <div className="relative mt-2 group w-full max-w-xs">
+                  <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border border-gray-200 max-h-40 object-contain bg-white" referrerPolicy="no-referrer" />
+                  <Button 
+                    variant="destructive" 
+                    size="icon" 
+                    className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => updateQuestion(q.id, { imageUrl: "" })}
+                  >
+                    <ImageOff className="w-3 h-3" />
+                  </Button>
+                </div>
+              )}
+              <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Xem trước nội dung:</div>
+                <div className="text-sm prose prose-sm max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                    {debouncedContent || "*Chưa có nội dung*"}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            </div>
+
+            {(q.type === "MC" || q.type === "TF") && q.options && (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">
+                    {q.type === "MC" ? "Các phương án (A, B, C, D)" : "Các ý Đúng/Sai (a, b, c, d)"}
+                  </label>
+                  {q.type === "TF" && q.options.length < 4 && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-6 text-[10px]"
+                      onClick={() => {
+                        const nextId = String.fromCharCode(97 + q.options!.length);
+                        updateQuestion(q.id, { 
+                          options: [...q.options!, { id: nextId, text: `Ý ${nextId}...`, isCorrect: false }] 
+                        });
+                      }}
+                    >
+                      <Plus className="w-3 h-3 mr-1" /> Thêm ý
+                    </Button>
+                  )}
+                </div>
+                {q.options.map((opt, optIdx) => (
+                  <div key={opt.id} className="flex items-center gap-2">
+                    <div className="flex flex-col items-center">
+                      <Checkbox 
+                        checked={opt.isCorrect} 
+                        onCheckedChange={(val) => {
+                          const newOpts = q.options!.map(o => 
+                            q.type === "MC" 
+                              ? { ...o, isCorrect: o.id === opt.id ? !!val : false }
+                              : o.id === opt.id ? { ...o, isCorrect: !!val } : o
+                          );
+                          updateQuestion(q.id, { options: newOpts });
+                        }}
+                      />
+                      <span className="text-[8px] text-gray-400 mt-0.5">{q.type === "TF" ? (opt.isCorrect ? "Đúng" : "Sai") : "Đúng"}</span>
+                    </div>
+                    <span className="text-xs font-bold w-4">{q.type === "TF" ? String.fromCharCode(97 + optIdx) : opt.id}</span>
+                    <Input 
+                      value={opt.text} 
+                      onChange={(e) => {
+                        const newOpts = q.options!.map(o => o.id === opt.id ? { ...o, text: e.target.value } : o);
+                        updateQuestion(q.id, { options: newOpts });
+                      }}
+                      className="h-8 text-xs font-mono"
+                      placeholder="Nhập phương án..."
+                    />
+                    <div className="text-[10px] bg-white px-2 py-1 rounded border border-gray-100 min-w-[100px]">
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                        {opt.text || "..."}
+                      </ReactMarkdown>
+                    </div>
+                    {q.type === "TF" && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-6 w-6 text-gray-300 hover:text-red-500"
+                        onClick={() => {
+                          const newOpts = q.options!.filter(o => o.id !== opt.id)
+                            .map((o, i) => ({ ...o, id: String.fromCharCode(97 + i) }));
+                          updateQuestion(q.id, { options: newOpts });
+                        }}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {q.type === "SA" && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Đáp án đúng</label>
+                <Input 
+                  value={q.correctAnswer} 
+                  onChange={(e) => updateQuestion(q.id, { correctAnswer: e.target.value })}
+                  className="h-8 text-xs font-mono"
+                  placeholder="Nhập đáp án chính xác..."
+                />
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="prose prose-sm max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                {q.content || "*Chưa có nội dung*"}
+              </ReactMarkdown>
+            </div>
+            {q.imageUrl && (
+              <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border border-gray-100 max-h-40 object-contain" referrerPolicy="no-referrer" />
+            )}
+            {(q.type === "MC" || q.type === "TF") && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 ml-4">
+                {q.options?.map((opt, oIdx) => (
+                  <div key={opt.id} className={`p-2 rounded border flex gap-2 ${opt.isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-gray-100'}`}>
+                    <span className="font-bold">{q.type === "TF" ? String.fromCharCode(97 + oIdx) : opt.id}.</span>
+                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                      {opt.text}
+                    </ReactMarkdown>
+                  </div>
+                ))}
+              </div>
+            )}
+            {q.type === "SA" && (
+              <div className="ml-4 p-2 bg-blue-50 rounded border border-blue-100 text-blue-700 flex gap-2">
+                <span className="font-bold">Đáp án:</span>
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  {q.correctAnswer || ""}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+});
+
+// --- Main component ---
 
 interface ExamGeneratorProps {
   matrixRows: MatrixRow[];
@@ -39,8 +366,8 @@ interface ExamGeneratorProps {
   setMatrixFile: (file: File | null) => void;
   useManualMatrix: boolean;
   setUseManualMatrix: (val: boolean) => void;
-  examContent: string | null;
-  setExamContent: (val: string | null) => void;
+  examData: Exam | null;
+  setExamData: (val: Exam | null) => void;
 }
 
 export default function ExamGenerator({ 
@@ -55,12 +382,14 @@ export default function ExamGenerator({
   setMatrixFile,
   useManualMatrix,
   setUseManualMatrix,
-  examContent,
-  setExamContent
+  examData,
+  setExamData
 }: ExamGeneratorProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState(false);
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -85,11 +414,6 @@ export default function ExamGenerator({
       return;
     }
 
-    if (!useManualMatrix && !matrixFile) {
-      setError("Vui lòng tải lên file ma trận.");
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
@@ -109,7 +433,9 @@ export default function ExamGenerator({
       }
 
       const result = await generateExamPaper(apiKey, matrixString, notes, sourceFileData, matrixFileData);
-      setExamContent(result);
+      const parsedExam: Exam = JSON.parse(result);
+      setExamData(parsedExam);
+      setPreviewMode(false);
     } catch (err) {
       console.error(err);
       setError("Đã xảy ra lỗi khi tạo đề kiểm tra. Vui lòng thử lại.");
@@ -118,89 +444,161 @@ export default function ExamGenerator({
     }
   };
 
-  const handleExportDocx = async () => {
-    if (!examContent) return;
+  const addQuestion = () => {
+    const newQuestion: Question = {
+      id: Math.random().toString(36).substr(2, 9),
+      type: "MC",
+      level: "know",
+      content: "Câu hỏi mới...",
+      options: [
+        { id: "A", text: "Phương án A", isCorrect: true },
+        { id: "B", text: "Phương án B", isCorrect: false },
+        { id: "C", text: "Phương án C", isCorrect: false },
+        { id: "D", text: "Phương án D", isCorrect: false },
+      ],
+      points: 0.25
+    };
 
-    const children: any[] = [];
-    const lines = examContent.split("\n");
-    let i = 0;
-    
-    while (i < lines.length) {
-      const line = lines[i];
-      const trimmed = line.trim();
-      
-      if (!trimmed) {
-        i++;
-        continue;
-      }
-
-      // Handle Tables
-      if (trimmed.startsWith("|")) {
-        const tableLines: string[] = [];
-        while (i < lines.length && lines[i].trim().startsWith("|")) {
-          tableLines.push(lines[i]);
-          i++;
-        }
-        if (tableLines.length > 0) {
-          children.push(createDocxTable(tableLines));
-          children.push(new Paragraph({ text: "" })); // Spacer
-        }
-        continue;
-      }
-
-      if (line.startsWith("# ")) {
-        children.push(new Paragraph({ 
-          children: parseMarkdownToRuns(line.replace("# ", "")),
-          heading: HeadingLevel.HEADING_1, 
-          spacing: { before: 400, after: 200 } 
-        }));
-      } else if (line.startsWith("## ")) {
-        children.push(new Paragraph({ 
-          children: parseMarkdownToRuns(line.replace("## ", "")),
-          heading: HeadingLevel.HEADING_2, 
-          spacing: { before: 300, after: 150 } 
-        }));
-      } else if (line.startsWith("### ")) {
-        children.push(new Paragraph({ 
-          children: parseMarkdownToRuns(line.replace("### ", "")),
-          heading: HeadingLevel.HEADING_3, 
-          spacing: { before: 200, after: 100 } 
-        }));
-      } else if (line.startsWith("- ") || line.startsWith("* ")) {
-        children.push(new Paragraph({
-          children: parseMarkdownToRuns(line.substring(2)),
-          bullet: { level: 0 },
-          spacing: { after: 120 }
-        }));
-      } else if (/^\d+\.\s/.test(line)) {
-        children.push(new Paragraph({
-          children: parseMarkdownToRuns(line),
-          spacing: { after: 120 }
-        }));
-      } else {
-        children.push(new Paragraph({
-          children: parseMarkdownToRuns(line),
-          spacing: { after: 200 }
-        }));
-      }
-      i++;
+    if (examData) {
+      setExamData({
+        ...examData,
+        questions: [...examData.questions, newQuestion]
+      });
+      setEditingId(newQuestion.id);
+    } else {
+      setExamData({
+        id: "new-exam",
+        title: "Đề thi mới",
+        subject: matrixSubject === "physics" ? "Vật Lý" : "Môn học khác",
+        grade: "10",
+        timeLimit: 45,
+        questions: [newQuestion],
+        createdAt: new Date().toISOString(),
+        teacherId: "current-user"
+      });
+      setEditingId(newQuestion.id);
     }
+  };
 
-    const doc = new Document({
-      sections: [{
-        children: children,
-      }],
+  const updateQuestion = (id: string, updates: Partial<Question>) => {
+    if (!examData) return;
+    setExamData({
+      ...examData,
+      questions: examData.questions.map(q => q.id === id ? { ...q, ...updates } : q)
     });
+  };
 
-    const blob = await Packer.toBlob(doc);
-    saveAs(blob, "DeKiemTra.docx");
+  const deleteQuestion = (id: string) => {
+    if (!examData) return;
+    setExamData({
+      ...examData,
+      questions: examData.questions.filter(q => q.id !== id)
+    });
+  };
+
+  const handleExportDocx = async () => {
+    if (!examData) return;
+
+    try {
+      const children: any[] = [
+        new Paragraph({ text: examData.title, heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
+        new Paragraph({ text: `Môn: ${examData.subject} - Thời gian: ${examData.timeLimit} phút`, alignment: AlignmentType.CENTER }),
+        new Paragraph({ text: "" }),
+      ];
+
+      examData.questions.forEach((q, idx) => {
+        children.push(new Paragraph({
+          children: [
+            new TextRun({ text: `Câu ${idx + 1}: `, bold: true }),
+            ...parseMarkdownToRuns(q.content)
+          ],
+          spacing: { before: 200, after: 100 }
+        }));
+
+        if (q.type === "MC" && q.options) {
+          q.options.forEach(opt => {
+            children.push(new Paragraph({
+              children: [
+                new TextRun({ text: `${opt.id}. `, bold: true }),
+                new TextRun(opt.text)
+              ],
+              indent: { left: 720 },
+              spacing: { after: 60 }
+            }));
+          });
+        }
+
+        if (q.type === "TF" && q.options) {
+          q.options.forEach((opt, optIdx) => {
+            const label = String.fromCharCode(97 + optIdx); // a, b, c, d
+            children.push(new Paragraph({
+              children: [
+                new TextRun({ text: `${label}) `, bold: true }),
+                new TextRun({ text: opt.text }),
+                new TextRun({ text: "\t\t(Đúng / Sai)", italics: true, color: "666666" })
+              ],
+              indent: { left: 720 },
+              spacing: { after: 60 }
+            }));
+          });
+        }
+      });
+
+      const doc = new Document({ sections: [{ children }] });
+      const blob = await Packer.toBlob(doc);
+      saveAs(blob, `${examData.title}.docx`);
+      toast.success("Đã xuất file Word thành công!");
+    } catch (err) {
+      console.error("Export error:", err);
+      toast.error("Lỗi khi xuất file Word. Vui lòng kiểm tra lại nội dung đề.");
+    }
   };
 
   const handleCopy = () => {
-    if (examContent) {
-      navigator.clipboard.writeText(examContent);
+    if (examData) {
+      const text = examData.questions.map((q, i) => `Câu ${i+1}: ${q.content}`).join("\n\n");
+      navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const [publishing, setPublishing] = useState(false);
+
+  const handlePublish = async () => {
+    if (!examData) return;
+    
+    if (!auth.currentUser) {
+      toast.error("Vui lòng đăng nhập để xuất bản đề thi.", {
+        description: "Nhấn nút 'Đăng nhập GV' ở góc trên bên phải."
+      });
+      return;
+    }
+
+    setPublishing(true);
+    const examId = examData.id || `exam_${Date.now()}`;
+    try {
+      const finalExam = {
+        ...examData,
+        id: examId,
+        createdAt: new Date().toISOString(),
+        teacherId: auth.currentUser.uid
+      };
+      await setDoc(doc(db, "exams", examId), finalExam);
+      toast.success("Đã xuất bản đề thi thành công!", {
+        description: `Mã đề của bạn là: ${examId}. Hãy gửi mã này cho học sinh.`,
+        duration: 10000,
+      });
+      setExamData(finalExam);
+    } catch (err) {
+      try {
+        handleFirestoreError(err, OperationType.WRITE, `exams/${examId}`);
+      } catch (wrappedErr) {
+        console.error(wrappedErr);
+        toast.error("Lỗi khi xuất bản đề thi. Vui lòng kiểm tra quyền truy cập.");
+      }
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -342,43 +740,73 @@ export default function ExamGenerator({
               </div>
             </CardContent>
           </Card>
-        ) : examContent ? (
+        ) : examData ? (
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="flex flex-col h-full"
           >
-            <div className="bg-white border-b p-4 flex justify-between items-center rounded-t-2xl">
+            <div className="bg-white border-b p-4 flex justify-between items-center rounded-t-2xl sticky top-0 z-10">
               <div className="flex items-center gap-2">
                 <div className="bg-blue-100 p-2 rounded-lg">
                   <FileText className="w-5 h-5 text-blue-600" />
                 </div>
-                <span className="font-bold text-gray-700">Đề kiểm tra đã soạn</span>
+                <Input 
+                  value={examData.title} 
+                  onChange={(e) => setExamData({ ...examData, title: e.target.value })}
+                  className="font-bold text-gray-700 border-none focus-visible:ring-0 w-64"
+                />
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={handleCopy}>
-                  {copied ? <Check className="w-4 h-4 mr-2 text-green-600" /> : <Copy className="w-4 h-4 mr-2" />}
-                  {copied ? "Đã sao chép" : "Sao chép"}
+                <Button variant={previewMode ? "default" : "outline"} size="sm" onClick={() => setPreviewMode(!previewMode)}>
+                  {previewMode ? <Edit2 className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
+                  {previewMode ? "Chế độ sửa" : "Xem trước"}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => window.print()}>
-                  <Printer className="w-4 h-4 mr-2" />
-                  In đề
+                <Button variant="outline" size="sm" onClick={addQuestion}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Thêm câu
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleExportDocx}>
                   <FileDown className="w-4 h-4 mr-2" />
                   Xuất Word
                 </Button>
+                <Button 
+                  className="bg-green-600 hover:bg-green-700 text-white" 
+                  size="sm"
+                  onClick={handlePublish}
+                  disabled={publishing}
+                >
+                  {publishing ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <CloudUpload className="w-4 h-4 mr-2" />}
+                  {publishing ? "Đang lưu..." : "Lưu & Xuất bản"}
+                </Button>
               </div>
             </div>
             
-            <ScrollArea className="flex-1 bg-white p-8 md:p-12 rounded-b-2xl shadow-sm">
-              <div className="markdown-content max-w-none">
-                <ReactMarkdown 
-                  remarkPlugins={[remarkMath, remarkGfm]} 
-                  rehypePlugins={[rehypeKatex]}
-                >
-                  {examContent}
-                </ReactMarkdown>
+            <ScrollArea className="flex-1 bg-gray-50 p-4 rounded-b-2xl shadow-sm">
+              <div className="space-y-4 max-w-4xl mx-auto pb-20">
+                {examData.questions.map((q, idx) => (
+                  <QuestionItem 
+                    key={q.id}
+                    q={q}
+                    idx={idx}
+                    editingId={editingId}
+                    setEditingId={setEditingId}
+                    updateQuestion={updateQuestion}
+                    deleteQuestion={deleteQuestion}
+                    previewMode={previewMode}
+                  />
+                ))}
+                {examData.questions.length === 0 && (
+                  <div className="h-full min-h-[400px] border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center text-center p-12 bg-white/50">
+                    <div className="bg-gray-100 p-6 rounded-full mb-6">
+                      <Sparkles className="w-12 h-12 text-gray-300" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">Chưa có câu hỏi nào</h3>
+                    <p className="text-gray-500 max-w-md">
+                      Nhấn nút "Thêm câu" hoặc sử dụng AI để tạo câu hỏi cho đề thi của bạn.
+                    </p>
+                  </div>
+                )}
               </div>
             </ScrollArea>
           </motion.div>
