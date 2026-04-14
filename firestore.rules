@@ -74,6 +74,9 @@ service cloud.firestore {
       
       // Only authenticated users (teachers) can read results
       allow read: if isTeacher();
+
+      // Allow deletion by teachers/admins
+      allow delete: if isTeacher();
     }
   }
 }
