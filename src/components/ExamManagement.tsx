@@ -59,6 +59,7 @@ interface ExamResult {
   totalQuestions: number;
   correctAnswers: number;
   submittedAt: string;
+  answers: Record<string, any>;
 }
 
 export default function ExamManagement({ userProfile, onDuplicate }: ExamManagementProps) {
@@ -71,6 +72,7 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
   const [resultSearch, setResultSearch] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
+  const [viewResult, setViewResult] = useState<ExamResult | null>(null);
 
   useEffect(() => {
     if (!userProfile) return;
@@ -313,9 +315,14 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                         {new Date(res.submittedAt).toLocaleString("vi-VN")}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600" onClick={() => handleDeleteResult(res.id)}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-blue-600" onClick={() => setViewResult(res)}>
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600" onClick={() => handleDeleteResult(res.id)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -485,6 +492,121 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                   )}
                 </div>
               ))}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!viewResult} onOpenChange={(open) => !open && setViewResult(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Chi tiết bài làm: {viewResult?.studentName}</DialogTitle>
+            <DialogDescription>
+              Đề thi: {viewResult?.examTitle} | Điểm: {viewResult?.score.toFixed(1)}/10
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="flex-1 mt-4 pr-4">
+            <div className="space-y-6 pb-8">
+              {viewResult && exams.find(e => e.id === viewResult.examId)?.questions.map((q, idx) => {
+                const studentAnswer = viewResult.answers[q.id];
+                return (
+                  <div key={q.id} className="p-4 rounded-xl border border-gray-100 bg-gray-50/50 space-y-3">
+                    <div className="font-medium flex gap-2">
+                      <span className="shrink-0 text-blue-600">Câu {idx + 1}:</span>
+                      <div className="prose prose-sm max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                          {q.content}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+
+                    <div className="ml-8 space-y-2">
+                      {q.type === "MC" && (
+                        <div className="grid grid-cols-1 gap-2">
+                          {q.options?.map((opt) => {
+                            const isSelected = studentAnswer === opt.id;
+                            const isCorrect = opt.isCorrect;
+                            return (
+                              <div 
+                                key={opt.id} 
+                                className={`p-2 rounded border flex items-center gap-2 text-sm ${
+                                  isSelected && isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                                  isSelected && !isCorrect ? 'bg-red-50 border-red-200 text-red-700' :
+                                  !isSelected && isCorrect ? 'bg-emerald-50/50 border-emerald-100 text-emerald-600' :
+                                  'bg-white border-gray-100'
+                                }`}
+                              >
+                                <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${isSelected ? 'bg-current' : ''}`}>
+                                  {isSelected && <Check className="w-3 h-3 text-white" />}
+                                </div>
+                                <span className="font-bold">{opt.id}.</span>
+                                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                  {opt.text}
+                                </ReactMarkdown>
+                                {isSelected && !isCorrect && <span className="ml-auto text-[10px] font-bold uppercase">Sai</span>}
+                                {isSelected && isCorrect && <span className="ml-auto text-[10px] font-bold uppercase">Đúng</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {q.type === "TF" && (
+                        <div className="space-y-2">
+                          {q.options?.map((opt, optIdx) => {
+                            const studentChoice = studentAnswer?.[`opt_${optIdx}`]; // "true" or "false"
+                            const isCorrect = (studentChoice === "true" && opt.isCorrect) || (studentChoice === "false" && !opt.isCorrect);
+                            return (
+                              <div key={opt.id} className="flex flex-col gap-1 p-2 bg-white rounded border border-gray-100">
+                                <div className="flex justify-between items-center gap-4">
+                                  <div className="flex gap-2 text-sm">
+                                    <span className="font-bold">{String.fromCharCode(97 + optIdx)}.</span>
+                                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                      {opt.text}
+                                    </ReactMarkdown>
+                                  </div>
+                                  <Badge variant={opt.isCorrect ? "default" : "destructive"} className="text-[10px] h-5">
+                                    {opt.isCorrect ? "Đúng" : "Sai"}
+                                  </Badge>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-[10px] text-gray-500">HS chọn:</span>
+                                  <Badge variant="outline" className={`text-[10px] h-5 ${isCorrect ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-red-200 text-red-700 bg-red-50'}`}>
+                                    {studentChoice === "true" ? "Đúng" : studentChoice === "false" ? "Sai" : "Chưa chọn"}
+                                    {studentChoice && (isCorrect ? " (Chính xác)" : " (Sai)")}
+                                  </Badge>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {q.type === "SA" && (
+                        <div className="space-y-2">
+                          <div className="p-2 bg-white rounded border border-gray-100 text-sm">
+                            <span className="text-[10px] text-gray-500 block mb-1 uppercase font-bold">HS trả lời:</span>
+                            <div className={studentAnswer === q.correctAnswer ? 'text-emerald-700 font-medium' : 'text-red-700 font-medium'}>
+                              {studentAnswer || "(Trống)"}
+                            </div>
+                          </div>
+                          <div className="p-2 bg-emerald-50 rounded border border-emerald-100 text-sm text-emerald-700">
+                            <span className="text-[10px] text-emerald-600 block mb-1 uppercase font-bold">Đáp án đúng:</span>
+                            {q.correctAnswer}
+                          </div>
+                        </div>
+                      )}
+
+                      {q.type === "ESSAY" && (
+                        <div className="p-2 bg-white rounded border border-gray-100 text-sm">
+                          <span className="text-[10px] text-gray-500 block mb-1 uppercase font-bold">HS trả lời:</span>
+                          <div className="whitespace-pre-wrap">{studentAnswer || "(Trống)"}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </ScrollArea>
         </DialogContent>
