@@ -144,6 +144,11 @@ Hãy đóng vai một giáo viên chuyên nghiệp và soạn một đề kiểm
 THÔNG TIN VỀ MA TRẬN ĐỀ:
 ${matrixFile ? "- Cấu trúc ma trận được cung cấp trong FILE ĐÍNH KÈM (Matrix File)." : `- Cấu trúc ma trận chi tiết: ${matrixData}`}
 
+YÊU CẦU CẤU TRÚC ĐỀ THI (THEO CHUẨN BGD 2025):
+- PHẦN I: 18 câu trắc nghiệm nhiều phương án lựa chọn (MC).
+- PHẦN II: 4 câu trắc nghiệm đúng sai (TF). Mỗi câu có 4 ý (a, b, c, d).
+- PHẦN III: 6 câu trắc nghiệm trả lời ngắn (SA).
+
 YÊU CẦU CHI TIẾT:
 1. Đề kiểm tra phải tuân thủ CHÍNH XÁC số lượng câu hỏi và mức độ (Biết, Hiểu, Vận dụng, Vận dụng cao) cho từng loại hình (Trắc nghiệm, Đúng-Sai, Trả lời ngắn, Tự luận) như trong ma trận được cung cấp.
 2. Nội dung câu hỏi phải bám sát các chủ đề/chương, nội dung kiến thức và YÊU CẦU CẦN ĐẠT trong ma trận.
@@ -221,6 +226,11 @@ export const parseExistingExam = async (
   const ai = new GoogleGenAI({ apiKey });
   const prompt = `
 Hãy đóng vai một chuyên gia số hóa học liệu cực kỳ cẩn thận. Nhiệm vụ của bạn là chuyển đổi TOÀN BỘ một đề kiểm tra hiện có (từ file đính kèm) thành định dạng JSON để sử dụng trên hệ thống thi trực tuyến.
+
+YÊU CẦU CẤU TRÚC ĐỀ THI (THEO CHUẨN BGD 2025):
+- PHẦN I: Câu trắc nghiệm nhiều phương án lựa chọn (MC). Thường có 18 câu. Mỗi câu 0.25 điểm.
+- PHẦN II: Câu trắc nghiệm đúng sai (TF). Thường có 4 câu. Mỗi câu có 4 ý (a, b, c, d). Cách tính điểm: Đúng 1 ý được 0.1đ, đúng 2 ý được 0.25đ, đúng 3 ý được 0.5đ, đúng 4 ý được 1.0đ.
+- PHẦN III: Câu trắc nghiệm trả lời ngắn (SA). Thường có 6 câu. Mỗi câu 0.25đ.
 
 YÊU CẦU QUAN TRỌNG NHẤT:
 - KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu hỏi nào có trong file. 
