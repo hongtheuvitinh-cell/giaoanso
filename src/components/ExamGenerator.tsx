@@ -816,7 +816,7 @@ export default function ExamGenerator({
               </div>
             </div>
             
-            <ScrollArea className="flex-1 bg-gray-50 p-4 rounded-b-2xl shadow-sm">
+            <div className="flex-1 bg-gray-50 p-4 rounded-b-2xl shadow-sm overflow-y-auto custom-scrollbar">
               <div className="space-y-4 max-w-4xl mx-auto pb-20">
                 {examData.questions.map((q, idx) => {
                   const prevQ = idx > 0 ? examData.questions[idx - 1] : null;
@@ -874,7 +874,7 @@ export default function ExamGenerator({
                   </div>
                 )}
               </div>
-            </ScrollArea>
+            </div>
           </motion.div>
         ) : (
           <div className="h-full min-h-[600px] border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center text-center p-12 bg-white/50">
