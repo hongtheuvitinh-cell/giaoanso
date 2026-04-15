@@ -492,6 +492,16 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                       </ReactMarkdown>
                     </div>
                   )}
+                  {q.explanation && (
+                    <div className="ml-4 p-3 bg-amber-50 rounded-lg border border-amber-100">
+                      <div className="text-[10px] font-bold text-amber-600 uppercase mb-1">Lời giải chi tiết:</div>
+                      <div className="text-sm prose prose-sm max-w-none text-amber-900">
+                        <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                          {q.explanation}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
