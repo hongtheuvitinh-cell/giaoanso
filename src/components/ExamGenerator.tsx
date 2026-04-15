@@ -760,7 +760,7 @@ export default function ExamGenerator({
       </div>
 
       {/* Output Section */}
-      <div className="lg:col-span-8">
+      <div className="lg:col-span-8 h-[calc(100vh-220px)] min-h-[600px]">
         {loading ? (
           <Card className="border-none shadow-sm h-full min-h-[600px]">
             <CardContent className="p-12 space-y-6">
