@@ -103,31 +103,56 @@ export default function StudentExam() {
     if (!exam) return;
     setLoading(true);
     try {
+      let totalScore = 0;
       let correctCount = 0;
+      
       exam.questions.forEach(q => {
         const studentAnswer = answers[q.id];
         if (q.type === "MC") {
           const correctOpt = q.options?.find(o => o.isCorrect);
-          if (correctOpt && studentAnswer === correctOpt.id) correctCount++;
+          if (correctOpt && studentAnswer === correctOpt.id) {
+            totalScore += 0.25;
+            correctCount++;
+          }
         } else if (q.type === "TF") {
-          // Simplified TF check
-          const allCorrect = q.options?.every((opt, optIdx) => {
-            const studentVal = studentAnswer?.[`opt_${optIdx}`] || false;
-            return studentVal === opt.isCorrect;
+          let subCorrect = 0;
+          q.options?.forEach((opt, optIdx) => {
+            const studentVal = studentAnswer?.[`opt_${optIdx}`];
+            // studentVal is "true" or "false" string from RadioGroup
+            const isCorrect = (studentVal === "true" && opt.isCorrect) || (studentVal === "false" && !opt.isCorrect);
+            if (isCorrect) subCorrect++;
           });
-          if (allCorrect) correctCount++;
+          
+          if (subCorrect === 1) totalScore += 0.1;
+          else if (subCorrect === 2) totalScore += 0.25;
+          else if (subCorrect === 3) totalScore += 0.5;
+          else if (subCorrect === 4) {
+            totalScore += 1.0;
+            correctCount++;
+          }
         } else if (q.type === "SA") {
-          if (studentAnswer?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase()) correctCount++;
+          if (studentAnswer?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase()) {
+            totalScore += 0.25;
+            correctCount++;
+          }
+        } else if (q.type === "ESSAY") {
+          // Essay is usually manually graded, but for now we give 0 or 1
+          if (studentAnswer && studentAnswer.length > 10) {
+            totalScore += 1.0;
+            correctCount++;
+          }
         }
       });
 
-      const score = (correctCount / exam.questions.length) * 10;
+      // Ensure score is within 0-10 range and rounded
+      const finalScore = Math.min(10, Math.max(0, totalScore));
+
       const resultData = {
         studentName,
         examId: exam.id,
         examTitle: exam.title,
         teacherId: exam.teacherId,
-        score,
+        score: finalScore,
         totalQuestions: exam.questions.length,
         correctAnswers: correctCount,
         submittedAt: new Date().toISOString(),
@@ -192,6 +217,26 @@ export default function StudentExam() {
 
   if (started && exam) {
     const currentQuestion = exam.questions[currentQuestionIdx];
+    
+    // Determine Part Header
+    let partHeader = null;
+    if (currentQuestion.type === "MC") {
+      partHeader = {
+        title: "PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn",
+        desc: "Thí sinh trả lời từ câu 1 đến câu 18. Mỗi câu hỏi thí sinh chỉ chọn một phương án."
+      };
+    } else if (currentQuestion.type === "TF") {
+      partHeader = {
+        title: "PHẦN II. Câu trắc nghiệm đúng sai",
+        desc: "Thí sinh trả lời từ câu 1 đến câu 4. Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn đúng hoặc sai."
+      };
+    } else if (currentQuestion.type === "SA") {
+      partHeader = {
+        title: "PHẦN III. Câu trắc nghiệm trả lời ngắn",
+        desc: "Thí sinh trả lời từ câu 1 đến câu 6."
+      };
+    }
+
     return (
       <div className="max-w-4xl mx-auto pb-20">
         <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm p-4 border-b flex justify-between items-center mb-6 rounded-b-xl shadow-sm">
@@ -209,6 +254,13 @@ export default function StudentExam() {
             {formatTime(timeLeft)}
           </div>
         </div>
+
+        {partHeader && (
+          <div className="mb-6 p-4 bg-blue-50 rounded-xl border border-blue-100">
+            <h3 className="font-bold text-blue-900">{partHeader.title}</h3>
+            <p className="text-xs text-blue-700 mt-1">{partHeader.desc}</p>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-8 space-y-6">
