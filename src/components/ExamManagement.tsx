@@ -424,15 +424,17 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
       </Tabs>
 
       <Dialog open={!!previewExam} onOpenChange={(open) => !open && setPreviewExam(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle>{previewExam?.title}</DialogTitle>
-            <DialogDescription>
-              {previewExam?.subject} - Lớp {previewExam?.grade} | {previewExam?.timeLimit} phút
-            </DialogDescription>
-          </DialogHeader>
-          <ScrollArea className="flex-1 mt-4 pr-4">
-            <div className="space-y-8 pb-8">
+        <DialogContent className="max-w-4xl h-[90vh] flex flex-col p-0 overflow-hidden">
+          <div className="p-6 pb-2 border-b border-gray-100">
+            <DialogHeader>
+              <DialogTitle>{previewExam?.title}</DialogTitle>
+              <DialogDescription>
+                {previewExam?.subject} - Lớp {previewExam?.grade} | {previewExam?.timeLimit} phút
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <ScrollArea className="flex-1 p-6">
+            <div className="space-y-8 pb-12">
               {previewExam?.questions.map((q, idx) => (
                 <div key={q.id} className="space-y-4">
                   <div className="font-medium flex gap-2">
@@ -498,15 +500,17 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
       </Dialog>
 
       <Dialog open={!!viewResult} onOpenChange={(open) => !open && setViewResult(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle>Chi tiết bài làm: {viewResult?.studentName}</DialogTitle>
-            <DialogDescription>
-              Đề thi: {viewResult?.examTitle} | Điểm: {viewResult?.score.toFixed(1)}/10
-            </DialogDescription>
-          </DialogHeader>
-          <ScrollArea className="flex-1 mt-4 pr-4">
-            <div className="space-y-6 pb-8">
+        <DialogContent className="max-w-3xl h-[90vh] flex flex-col p-0 overflow-hidden">
+          <div className="p-6 pb-2 border-b border-gray-100">
+            <DialogHeader>
+              <DialogTitle>Chi tiết bài làm: {viewResult?.studentName}</DialogTitle>
+              <DialogDescription>
+                Đề thi: {viewResult?.examTitle} | Điểm: {viewResult?.score.toFixed(1)}/10
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <ScrollArea className="flex-1 p-6">
+            <div className="space-y-6 pb-12">
               {viewResult && exams.find(e => e.id === viewResult.examId)?.questions.map((q, idx) => {
                 const studentAnswer = viewResult.answers[q.id];
                 return (
