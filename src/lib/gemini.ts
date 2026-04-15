@@ -173,7 +173,7 @@ Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có
         { "id": "string", "text": "Nội dung phương án", "isCorrect": boolean }
       ],
       "correctAnswer": "string", // Dành cho SA
-      "explanation": "Giải thích chi tiết",
+      "explanation": "Giải thích chi tiết và các bước giải cụ thể để học sinh hiểu tại sao đáp án đó là đúng",
       "points": number
     }
   ]
@@ -264,7 +264,7 @@ Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có
         { "id": "string", "text": "Nội dung phương án", "isCorrect": boolean }
       ],
       "correctAnswer": "string", // Dành cho SA
-      "explanation": "Giải thích chi tiết (nếu có)",
+      "explanation": "Giải thích chi tiết và các bước giải cụ thể (BẮT BUỘC PHẢI CÓ để học sinh luyện tập)",
       "points": number
     }
   ]
