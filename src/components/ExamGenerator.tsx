@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   FileText, 
@@ -69,6 +69,7 @@ const QuestionItem = React.memo(({
 }) => {
   const [localContent, setLocalContent] = useState(q.content);
   const [debouncedContent, setDebouncedContent] = useState(q.content);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLocalContent(q.content);
@@ -84,6 +85,24 @@ const QuestionItem = React.memo(({
     }, 500);
     return () => clearTimeout(timer);
   }, [localContent]);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 800 * 1024) {
+      toast.error("Ảnh quá lớn (tối đa 800KB). Vui lòng nén ảnh trước khi tải lên.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      updateQuestion(q.id, { imageUrl: base64 });
+      toast.success("Đã tải ảnh lên thành công!");
+    };
+    reader.readAsDataURL(file);
+  };
 
   if (previewMode) {
     return (
@@ -190,17 +209,34 @@ const QuestionItem = React.memo(({
             <div className="space-y-1">
               <div className="flex justify-between items-center">
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Nội dung câu hỏi (Hỗ trợ Latex $...$)</label>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  className="h-6 text-[10px] text-blue-600"
-                  onClick={() => {
-                    const url = window.prompt("Nhập URL hình ảnh minh họa:");
-                    if (url !== null) updateQuestion(q.id, { imageUrl: url });
-                  }}
-                >
-                  <ImageIcon className="w-3 h-3 mr-1" /> {q.imageUrl ? "Đổi ảnh" : "Thêm ảnh"}
-                </Button>
+                <div className="flex gap-1">
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    accept="image/*" 
+                    onChange={handleImageUpload} 
+                  />
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-6 text-[10px] text-blue-600"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <FileUp className="w-3 h-3 mr-1" /> {q.imageUrl ? "Đổi ảnh" : "Tải ảnh lên"}
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-6 text-[10px] text-gray-500"
+                    onClick={() => {
+                      const url = window.prompt("Nhập URL hình ảnh minh họa:");
+                      if (url !== null) updateQuestion(q.id, { imageUrl: url });
+                    }}
+                  >
+                    <ImageIcon className="w-3 h-3 mr-1" /> Link ảnh
+                  </Button>
+                </div>
               </div>
               <Textarea 
                 value={localContent} 
