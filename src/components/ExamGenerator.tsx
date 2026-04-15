@@ -350,6 +350,16 @@ const QuestionItem = React.memo(({
                 />
               </div>
             )}
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-gray-400 uppercase">Giải thích chi tiết (Học sinh sẽ thấy sau khi nộp bài)</label>
+              <Textarea 
+                value={q.explanation} 
+                onChange={(e) => updateQuestion(q.id, { explanation: e.target.value })}
+                className="min-h-[80px] text-sm font-mono"
+                placeholder="Nhập lời giải chi tiết cho câu hỏi này..."
+              />
+            </div>
           </div>
         ) : (
           <div className="space-y-4">
@@ -379,6 +389,16 @@ const QuestionItem = React.memo(({
                 <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                   {q.correctAnswer || ""}
                 </ReactMarkdown>
+              </div>
+            )}
+            {q.explanation && (
+              <div className="mt-4 p-3 bg-amber-50 rounded-lg border border-amber-100">
+                <div className="text-[10px] font-bold text-amber-600 uppercase mb-1">Lời giải chi tiết:</div>
+                <div className="text-sm prose prose-sm max-w-none text-amber-900">
+                  <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                    {q.explanation}
+                  </ReactMarkdown>
+                </div>
               </div>
             )}
           </div>
@@ -502,6 +522,7 @@ export default function ExamGenerator({
         { id: "C", text: "Phương án C", isCorrect: false },
         { id: "D", text: "Phương án D", isCorrect: false },
       ],
+      explanation: "",
       points: 0.25
     };
 
