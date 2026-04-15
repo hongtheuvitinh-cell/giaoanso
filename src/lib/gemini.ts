@@ -184,6 +184,23 @@ Lưu ý:
 - TF: Trắc nghiệm Đúng/Sai theo định dạng mới. Một câu hỏi lớn có 4 ý (a, b, c, d). "options" phải chứa đúng 4 phần tử tương ứng với 4 ý này. "id" của các ý lần lượt là "a", "b", "c", "d". "text" là nội dung của ý đó và "isCorrect" là true nếu ý đó ĐÚNG, false nếu ý đó SAI.
 - SA: Trả lời ngắn.
 - ESSAY: Tự luận.
+
+YÊU CẦU VỀ CÔNG THỨC TOÁN HỌC (CỰC KỲ QUAN TRỌNG):
+- TẤT CẢ các công thức toán học, kí hiệu vật lý, hóa học, biến số (x, y, m, n...) và các biểu thức số học PHẢI được viết bằng định dạng LaTeX và bao quanh bởi dấu $ (ví dụ: $x^2$, $\sqrt{x}$, $\frac{a}{b}$, $\int_{a}^{b} f(x)dx$, $\Delta$, $\Omega$).
+- TUYỆT ĐỐI KHÔNG sử dụng chữ để mô tả kí hiệu (ví dụ: KHÔNG viết "can(x)", "can bac hai", "V" thay cho $\sqrt{x}$, KHÔNG viết "tich phan" thay cho $\int$).
+- TUYỆT ĐỐI KHÔNG sử dụng các kí hiệu máy tính thay cho kí hiệu toán học chuẩn:
+  + KHÔNG dùng * cho phép nhân, hãy dùng \cdot hoặc \times (ví dụ: $2 \cdot 3$ thay vì 2*3).
+  + KHÔNG dùng / cho phân số trong công thức phức tạp, hãy dùng \frac{...}{...} (ví dụ: $\frac{1}{2}$ thay vì 1/2).
+  + KHÔNG dùng _ hoặc ^ mà không có dấu $ bao quanh (ví dụ: $m_U$ thay vì m_U).
+- Mọi biểu thức có chứa kí hiệu toán học, dù chỉ là một biến số đơn lẻ, đều phải nằm trong cặp dấu $.
+
+VÍ DỤ SO SÁNH:
+- SAI: m_U/m_X = (N_U * 238) / (N_X * A_X)
+- ĐÚNG: $\frac{m_U}{m_X} = \frac{N_U \cdot 238}{N_X \cdot A_X}$
+- SAI: y.T
+- ĐÚNG: $y \cdot T$
+- SAI: 2^-n / (1 - 2^-n)
+- ĐÚNG: $\frac{2^{-n}}{1 - 2^{-n}}$
 `;
 
   const contents: any[] = [{ text: prompt }];
@@ -273,6 +290,23 @@ Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có
 Lưu ý về ID của options:
 - MC: id phải là "A", "B", "C", "D".
 - TF: id phải là "a", "b", "c", "d".
+
+YÊU CẦU VỀ CÔNG THỨC TOÁN HỌC (CỰC KỲ QUAN TRỌNG):
+- TẤT CẢ các công thức toán học, kí hiệu vật lý, hóa học, biến số (x, y, m, n...) và các biểu thức số học PHẢI được viết bằng định dạng LaTeX và bao quanh bởi dấu $ (ví dụ: $x^2$, $\sqrt{x}$, $\frac{a}{b}$, $\int_{a}^{b} f(x)dx$, $\Delta$, $\Omega$).
+- TUYỆT ĐỐI KHÔNG sử dụng chữ để mô tả kí hiệu (ví dụ: KHÔNG viết "can(x)", "can bac hai", "V" thay cho $\sqrt{x}$, KHÔNG viết "tich phan" thay cho $\int$).
+- TUYỆT ĐỐI KHÔNG sử dụng các kí hiệu máy tính thay cho kí hiệu toán học chuẩn:
+  + KHÔNG dùng * cho phép nhân, hãy dùng \cdot hoặc \times (ví dụ: $2 \cdot 3$ thay vì 2*3).
+  + KHÔNG dùng / cho phân số trong công thức phức tạp, hãy dùng \frac{...}{...} (ví dụ: $\frac{1}{2}$ thay vì 1/2).
+  + KHÔNG dùng _ hoặc ^ mà không có dấu $ bao quanh (ví dụ: $m_U$ thay vì m_U).
+- Mọi biểu thức có chứa kí hiệu toán học, dù chỉ là một biến số đơn lẻ, đều phải nằm trong cặp dấu $.
+
+VÍ DỤ SO SÁNH:
+- SAI: m_U/m_X = (N_U * 238) / (N_X * A_X)
+- ĐÚNG: $\frac{m_U}{m_X} = \frac{N_U \cdot 238}{N_X \cdot A_X}$
+- SAI: y.T
+- ĐÚNG: $y \cdot T$
+- SAI: 2^-n / (1 - 2^-n)
+- ĐÚNG: $\frac{2^{-n}}{1 - 2^{-n}}$
 `;
 
   const contents: any[] = [{ text: prompt }];
