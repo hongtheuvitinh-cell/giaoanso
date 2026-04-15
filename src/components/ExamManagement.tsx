@@ -425,7 +425,7 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
 
       <Dialog open={!!previewExam} onOpenChange={(open) => !open && setPreviewExam(null)}>
         <DialogContent className="max-w-4xl h-[90vh] flex flex-col p-0 overflow-hidden">
-          <div className="p-6 pb-2 border-b border-gray-100">
+          <div className="p-6 pb-4 border-b border-gray-100 shrink-0">
             <DialogHeader>
               <DialogTitle>{previewExam?.title}</DialogTitle>
               <DialogDescription>
@@ -433,7 +433,7 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
               </DialogDescription>
             </DialogHeader>
           </div>
-          <ScrollArea className="flex-1 p-6">
+          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
             <div className="space-y-8 pb-12">
               {previewExam?.questions.map((q, idx) => (
                 <div key={q.id} className="space-y-4">
@@ -495,13 +495,13 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                 </div>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={!!viewResult} onOpenChange={(open) => !open && setViewResult(null)}>
         <DialogContent className="max-w-3xl h-[90vh] flex flex-col p-0 overflow-hidden">
-          <div className="p-6 pb-2 border-b border-gray-100">
+          <div className="p-6 pb-4 border-b border-gray-100 shrink-0">
             <DialogHeader>
               <DialogTitle>Chi tiết bài làm: {viewResult?.studentName}</DialogTitle>
               <DialogDescription>
@@ -509,7 +509,7 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
               </DialogDescription>
             </DialogHeader>
           </div>
-          <ScrollArea className="flex-1 p-6">
+          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
             <div className="space-y-6 pb-12">
               {viewResult && exams.find(e => e.id === viewResult.examId)?.questions.map((q, idx) => {
                 const studentAnswer = viewResult.answers[q.id];
@@ -612,7 +612,7 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
