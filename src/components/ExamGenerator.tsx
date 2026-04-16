@@ -37,6 +37,12 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
+import { 
+  Tabs, 
+  TabsContent, 
+  TabsList, 
+  TabsTrigger 
+} from "@/components/ui/tabs";
 import { MatrixRow, Question, QuestionType, QuestionLevel, Exam } from "@/types";
 import { generateExamPaper, parseExistingExam } from "@/lib/gemini";
 import { toast } from "sonner";
@@ -454,6 +460,8 @@ interface ExamGeneratorProps {
   setNotes: (val: string) => void;
   sourceFile: File | null;
   setSourceFile: (file: File | null) => void;
+  sourceText: string;
+  setSourceText: (val: string) => void;
   matrixFile: File | null;
   setMatrixFile: (file: File | null) => void;
   useManualMatrix: boolean;
@@ -470,6 +478,8 @@ export default function ExamGenerator({
   setNotes,
   sourceFile,
   setSourceFile,
+  sourceText,
+  setSourceText,
   matrixFile,
   setMatrixFile,
   useManualMatrix,
@@ -507,8 +517,8 @@ export default function ExamGenerator({
       return;
     }
 
-    if (generatorMode === "import" && !sourceFile) {
-      setError("Vui lòng tải lên file đề thi hiện có để chuyển đổi.");
+    if (generatorMode === "import" && !sourceFile && !sourceText) {
+      setError("Vui lòng tải lên file đề thi hoặc nhập văn bản đề thi để chuyển đổi.");
       return;
     }
 
@@ -533,7 +543,7 @@ export default function ExamGenerator({
           }
           result = await generateExamPaper(apiKey, matrixString, notes, sourceFileData, matrixFileData);
         } else {
-          result = await parseExistingExam(apiKey, notes, sourceFileData);
+          result = await parseExistingExam(apiKey, notes, sourceFileData, sourceText);
         }
       } catch (apiErr: any) {
         console.error("API Error:", apiErr);
@@ -866,23 +876,60 @@ export default function ExamGenerator({
 
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-gray-700">
-                    {generatorMode === "matrix" ? "Tải lên file Nội dung (Nguồn câu hỏi)" : "Tải lên file Đề thi hiện có"}
+                    {generatorMode === "matrix" ? "Tải lên file Nội dung (Nguồn câu hỏi)" : "Nội dung đề thi (File hoặc Văn bản)"}
                   </label>
-                  <div className="relative group">
-                    <input 
-                      type="file" 
-                      accept=".pdf,.docx,.csv"
-                      onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                    />
-                    <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${sourceFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
-                      <FileUp className={`w-8 h-8 mx-auto mb-2 ${sourceFile ? 'text-blue-600' : 'text-gray-400'}`} />
-                      <p className="text-sm font-medium text-gray-600">
-                        {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file đề/nguồn"}
-                      </p>
-                      <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
+                  
+                  {generatorMode === "import" && (
+                    <Tabs defaultValue="file" className="w-full">
+                      <TabsList className="grid w-full grid-cols-2 mb-2">
+                        <TabsTrigger value="file" className="text-xs">Tải file (PDF/Word)</TabsTrigger>
+                        <TabsTrigger value="text" className="text-xs">Dán văn bản</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="file">
+                        <div className="relative group">
+                          <input 
+                            type="file" 
+                            accept=".pdf,.docx,.csv"
+                            onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                          />
+                          <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${sourceFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
+                            <FileUp className={`w-8 h-8 mx-auto mb-2 ${sourceFile ? 'text-blue-600' : 'text-gray-400'}`} />
+                            <p className="text-sm font-medium text-gray-600">
+                              {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file đề"}
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
+                          </div>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="text">
+                        <Textarea 
+                          placeholder="Dán nội dung đề thi của bạn vào đây (bao gồm cả câu hỏi và các phương án)..."
+                          className="min-h-[200px] rounded-xl border-gray-200 focus:ring-blue-500 text-sm font-mono"
+                          value={sourceText}
+                          onChange={(e) => setSourceText(e.target.value)}
+                        />
+                      </TabsContent>
+                    </Tabs>
+                  )}
+
+                  {generatorMode === "matrix" && (
+                    <div className="relative group">
+                      <input 
+                        type="file" 
+                        accept=".pdf,.docx,.csv"
+                        onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      />
+                      <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${sourceFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
+                        <FileUp className={`w-8 h-8 mx-auto mb-2 ${sourceFile ? 'text-blue-600' : 'text-gray-400'}`} />
+                        <p className="text-sm font-medium text-gray-600">
+                          {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file nguồn"}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">
