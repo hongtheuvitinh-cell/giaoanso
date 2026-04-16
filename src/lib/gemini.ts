@@ -1,335 +1,1000 @@
-import { GoogleGenAI } from "@google/genai";
-import { BGD_DIGITAL_FRAMEWORK } from "@/constants/framework";
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-export const generateLessonPlan = async (
-  apiKey: string,
-  topic: string, 
-  grade: string, 
-  duration: string, 
-  referenceContent?: string, 
-  customFramework?: string,
-  pdfData?: { data: string, mimeType: string }
-) => {
-  const ai = new GoogleGenAI({ apiKey });
-  const prompt = `
-Hãy đóng vai một chuyên gia giáo dục và soạn một KẾ HOẠCH BÀI DẠY (Giáo án) chi tiết theo định dạng chuẩn của Bộ Giáo dục (Công văn 5512), bám sát chương trình GDPT 2018 và phong cách trình bày chuyên nghiệp như mẫu sách giáo khoa/sách giáo viên.
+import { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
+import { 
+  BookOpen, 
+  Sparkles, 
+  Download, 
+  Printer, 
+  ChevronRight, 
+  Cpu, 
+  GraduationCap, 
+  Clock,
+  RefreshCw,
+  AlertCircle,
+  Copy,
+  Check,
+  FileText,
+  FileUp,
+  FileDown,
+  Table as TableIcon,
+  User,
+  LogOut,
+  LogIn,
+  Settings,
+  ShieldCheck,
+  RotateCcw
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import remarkGfm from "remark-gfm";
+import rehypeKatex from "rehype-katex";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { generateLessonPlan, integrateDigitalCompetency } from "@/lib/gemini";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table } from "docx";
+import { saveAs } from "file-saver";
+import MatrixGenerator from "@/components/MatrixGenerator";
+import { MatrixRow, PHYSICS_COMPETENCIES, Exam } from "./types";
+import ExamGenerator from "@/components/ExamGenerator";
+import StudentExam from "@/components/StudentExam";
+import ExamManagement from "@/components/ExamManagement";
+import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
+import { db, doc, getDoc, setDoc, updateDoc, increment, onSnapshot, auth } from "@/lib/firebase";
+import { Toaster } from "@/components/ui/sonner";
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
+import { toast } from "sonner";
 
-THÔNG TIN CHUNG:
-- Tên bài học: ${topic}
-- Lớp: ${grade}
-- Thời lượng: ${duration}
-${referenceContent ? `- Nội dung tham khảo: ${referenceContent}` : ""}
+export default function App() {
+  const [topic, setTopic] = useState("");
+  const [grade, setGrade] = useState("");
+  const [duration, setDuration] = useState("45 phút");
+  const [referenceContent, setReferenceContent] = useState("");
+  const [framework, setFramework] = useState("");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem("gemini_api_key") || "");
+  const [loading, setLoading] = useState(false);
+  const [lessonPlan, setLessonPlan] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [visitCount, setVisitCount] = useState<number | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState("lesson-plan");
+  const [lessonPlanMode, setLessonPlanMode] = useState<"create" | "integrate">("create");
+  const [existingLessonPlan, setExistingLessonPlan] = useState("");
 
-DƯỚI ĐÂY LÀ KHUNG NĂNG LỰC SỐ CHUẨN (BGD) MÀ BẠN PHẢI TUÂN THỦ VÀ TÍCH HỢP VÀO GIÁO ÁN:
-${BGD_DIGITAL_FRAMEWORK}
-${customFramework ? `\nYÊU CẦU BỔ SUNG VỀ KHUNG NĂNG LỰC VÀ YÊU CẦU RIÊNG CỦA GIÁO VIÊN:\n${customFramework}\n(LƯU Ý: Nếu giáo viên cung cấp các Năng lực đặc thù hoặc yêu cầu riêng ở đây, hãy ƯU TIÊN sử dụng và phân tích chi tiết các năng lực này vào mục I.1.a và xuyên suốt tiến trình dạy học).\n` : ""}
-
-YÊU CẦU CẤU TRÚC CHI TIẾT:
-
-I. MỤC TIÊU
-1. Kiến thức: (Nêu cụ thể các kiến thức học sinh cần đạt dưới dạng gạch đầu dòng chi tiết).
-2. Năng lực:
-   a. Năng lực đặc thù môn học:
-      - Nhận thức: (Nêu cụ thể các kiến thức, khái niệm học sinh cần đạt).
-      - Tìm hiểu thế giới tự nhiên/xã hội: (Các hoạt động quan sát, thí nghiệm, điều tra, suy luận).
-      - Vận dụng kiến thức, kĩ năng đã học: (Giải quyết vấn đề thực tiễn liên quan đến môn học).
-   b. Năng lực chung: (Tự chủ, Giao tiếp, Hợp tác...).
-3. Phẩm chất: (Trách nhiệm, trung thực, chăm chỉ...).
-4. Năng lực số (Digital Competence): 
-   - Phân tích và lồng ghép CHI TIẾT các mã năng lực số (ví dụ: 1.1NC1a, 2.1NC1b...) vào bài học.
-   - Trình bày dưới dạng BẢNG: | Mã NLS | Hoạt động của học sinh để đạt năng lực |
-
-II. THIẾT BỊ DẠY HỌC VÀ HỌC LIỆU
-- Thiết bị dạy học (Ghi rõ từng bộ dụng cụ, máy tính, máy chiếu...).
-- Học liệu số (Link tham khảo, phần mềm, video, phiếu học tập số...).
-
-III. TIẾN TRÌNH DẠY HỌC
-Thiết kế theo 4 hoạt động: Mở đầu, Hình thành kiến thức, Luyện tập, Vận dụng.
-Mỗi hoạt động PHẢI có cấu trúc sau:
-a) Mục tiêu: (Nêu rõ mục tiêu của hoạt động).
-b) Tổ chức thực hiện: TRÌNH BÀY DƯỚI DẠNG BẢNG gồm 2 cột: "Hoạt động của GV và HS" và "Sản phẩm".
-Trong cột "Hoạt động của GV và HS", phải thể hiện rõ 4 bước:
-- Bước 1: Chuyển giao nhiệm vụ (GV giao nhiệm vụ, nêu luật chơi, phát phiếu...).
-- Bước 2: Thực hiện nhiệm vụ học tập (HS làm việc cá nhân/nhóm, GV hỗ trợ).
-- Bước 3: Báo cáo kết quả và thảo luận (Đại diện báo cáo, các nhóm khác nhận xét).
-- Bước 4: Đánh giá kết quả thực hiện nhiệm vụ (GV nhận xét, chốt kiến thức).
-
-*Lưu ý: Trong các bước thực hiện, hãy ghi chú rõ các mã Năng lực số (NLS) được tích hợp.*
-
-IV. HƯỚNG DẪN VỀ NHÀ
-
-YÊU CẦU TRÌNH BÀY:
-- Ngôn ngữ sư phạm chuẩn mực, trình bày Markdown sạch đẹp.
-- Các bảng biểu phải rõ ràng.
-- Nếu có file đính kèm, hãy trích xuất kiến thức chuyên môn từ đó để làm nội dung bài dạy.
-`;
-
-  const contents: any[] = [{ text: prompt }];
-  if (pdfData) {
-    contents.push({
-      inlineData: {
-        data: pdfData.data,
-        mimeType: pdfData.mimeType
+  // Auth Logic
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setUser(user);
+      if (user) {
+        // Fetch or create user profile
+        const userDocRef = doc(db, "users", user.uid);
+        const userSnap = await getDoc(userDocRef);
+        if (userSnap.exists()) {
+          setUserProfile(userSnap.data());
+        } else {
+          const newProfile = {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            role: user.email === "trieuhaminh@gmail.com" ? "admin" : "pending",
+            createdAt: new Date().toISOString()
+          };
+          await setDoc(userDocRef, newProfile);
+          setUserProfile(newProfile);
+        }
+      } else {
+        setUserProfile(null);
       }
     });
-  }
+    return () => unsubscribe();
+  }, []);
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: { parts: contents },
-  });
-
-  return response.text;
-};
-
-export const integrateDigitalCompetency = async (
-  apiKey: string,
-  existingPlan: string,
-  customRequirements?: string,
-  pdfData?: { data: string, mimeType: string }
-) => {
-  const ai = new GoogleGenAI({ apiKey });
-  const prompt = `
-Hãy đóng vai một chuyên gia giáo dục và thực hiện việc LỒNG GHÉP NĂNG LỰC SỐ (Digital Competency) vào Kế hoạch bài dạy (KHBD) hiện có.
-
-DƯỚI ĐÂY LÀ KHUNG NĂNG LỰC SỐ CHUẨN (BGD) MÀ BẠN PHẢI TUÂN THỦ VÀ TÍCH HỢP:
-${BGD_DIGITAL_FRAMEWORK}
-
-YÊU CẦU THỰC HIỆN:
-1. Giữ nguyên cấu trúc và nội dung chuyên môn của KHBD cũ.
-2. Tại mục I. MỤC TIÊU, hãy thêm mục "4. Năng lực số" và liệt kê các mã năng lực số phù hợp với bài học này. Trình bày dưới dạng bảng: | Mã NLS | Hoạt động của học sinh để đạt năng lực |.
-3. Tại mục III. TIẾN TRÌNH DẠY HỌC:
-   - Trong các bảng "Hoạt động của GV và HS" và "Sản phẩm", hãy THÊM MỘT CỘT MỚI mang tên "Năng lực số (NLS)" bên cạnh cột "Sản phẩm" (hoặc lồng ghép khéo léo vào cột Sản phẩm nếu bảng quá rộng).
-   - Trong cột NLS này, hãy ghi rõ các mã năng lực số (ví dụ: 1.1NC1a) mà học sinh đạt được thông qua các bước thực hiện tương ứng.
-4. Bổ sung thêm các Thiết bị dạy học và Học liệu số cần thiết vào mục II để hỗ trợ việc hình thành năng lực số.
-5. ${customRequirements ? `YÊU CẦU RIÊNG CỦA GIÁO VIÊN: ${customRequirements}` : "Không có yêu cầu riêng."}
-
-${existingPlan ? `KHBD CŨ CẦN LỒNG GHÉP:\n${existingPlan}` : "KHBD CŨ CẦN LỒNG GHÉP ĐƯỢC CUNG CẤP TRONG FILE ĐÍNH KÈM."}
-
-YÊU CẦU TRÌNH BÀY:
-- Trả về toàn bộ KHBD hoàn chỉnh (bao gồm cả phần cũ và phần đã lồng ghép NLS).
-- Sử dụng Markdown chuẩn, bảng biểu rõ ràng.
-- Ngôn ngữ sư phạm chuyên nghiệp.
-`;
-
-  const contents: any[] = [{ text: prompt }];
-  if (pdfData) {
-    contents.push({
-      inlineData: {
-        data: pdfData.data,
-        mimeType: pdfData.mimeType
+  const handleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      toast.success("Đăng nhập thành công!");
+    } catch (err: any) {
+      console.error(err);
+      let message = "Lỗi khi đăng nhập.";
+      if (err.code === "auth/unauthorized-domain") {
+        message = "Tên miền này chưa được cấp phép trong Firebase Console.";
+      } else if (err.message) {
+        message = `Lỗi: ${err.message}`;
       }
-    });
-  }
-
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: { parts: contents },
-  });
-
-  return response.text;
-};
-
-export const generateExamPaper = async (
-  apiKey: string,
-  matrixData: string | null,
-  notes: string,
-  sourceFile?: { data: string, mimeType: string },
-  matrixFile?: { data: string, mimeType: string }
-) => {
-  const ai = new GoogleGenAI({ apiKey });
-  const prompt = `
-Hãy đóng vai một giáo viên chuyên nghiệp và soạn một đề kiểm tra.
-
-THÔNG TIN VỀ MA TRẬN ĐỀ:
-${matrixFile ? "- Cấu trúc ma trận được cung cấp trong FILE ĐÍNH KÈM (Matrix File)." : `- Cấu trúc ma trận chi tiết: ${matrixData}`}
-
-YÊU CẦU CẤU TRÚC ĐỀ THI (THEO CHUẨN BGD 2025):
-- PHẦN I: 18 câu trắc nghiệm nhiều phương án lựa chọn (MC).
-- PHẦN II: 4 câu trắc nghiệm đúng sai (TF). Mỗi câu có 4 ý (a, b, c, d).
-- PHẦN III: 6 câu trắc nghiệm trả lời ngắn (SA).
-
-YÊU CẦU CHI TIẾT:
-1. Đề kiểm tra phải tuân thủ CHÍNH XÁC số lượng câu hỏi và mức độ (Biết, Hiểu, Vận dụng, Vận dụng cao) cho từng loại hình (Trắc nghiệm, Đúng-Sai, Trả lời ngắn, Tự luận) như trong ma trận được cung cấp.
-2. Nội dung câu hỏi phải bám sát các chủ đề/chương, nội dung kiến thức và YÊU CẦU CẦN ĐẠT trong ma trận.
-3. ${notes ? `LƯU Ý THÊM TỪ GIÁO VIÊN: ${notes}` : "Không có lưu ý thêm."}
-4. NGUỒN CÂU HỎI: 
-   ${sourceFile ? "- Sử dụng nội dung trong FILE ĐÍNH KÈM (Source File) làm nguồn câu hỏi chính." : "- Tự soạn câu hỏi dựa trên kiến thức chuẩn nếu không có file nguồn câu hỏi."}
-
-YÊU CẦU ĐỊNH DẠNG ĐẦU RA (QUAN TRỌNG):
-Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có markdown code blocks) theo cấu trúc sau:
-{
-  "title": "Tên đề thi",
-  "subject": "Môn học",
-  "grade": "Lớp",
-  "timeLimit": 45,
-  "questions": [
-    {
-      "id": "string_unique_id",
-      "type": "MC" | "TF" | "SA" | "ESSAY",
-      "level": "know" | "understand" | "apply" | "highApply",
-      "content": "Nội dung câu hỏi",
-      "options": [ // Chỉ dành cho MC và TF
-        { "id": "string", "text": "Nội dung phương án", "isCorrect": boolean }
-      ],
-      "correctAnswer": "string", // Dành cho SA
-      "explanation": "Giải thích chi tiết và các bước giải cụ thể để học sinh hiểu tại sao đáp án đó là đúng",
-      "points": number
+      toast.error(message, {
+        description: "Vui lòng kiểm tra cấu hình Authorized Domains trong Firebase."
+      });
     }
-  ]
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      toast.success("Đã đăng xuất.");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleResetAll = () => {
+    if (!window.confirm("Bạn có chắc chắn muốn xóa toàn bộ dữ liệu phiên làm việc này? (Ma trận, đề thi đang soạn, nội dung giáo án... sẽ bị xóa sạch để bảo mật)")) return;
+    
+    // Reset Lesson Plan states
+    setTopic("");
+    setGrade("");
+    setDuration("45 phút");
+    setReferenceContent("");
+    setFramework("");
+    setPdfFile(null);
+    setLessonPlan(null);
+    setExistingLessonPlan("");
+    
+    // Reset Matrix states
+    setMatrixSubject("general");
+    setMatrixRows([
+      { 
+        id: "1", 
+        chapter: "Bài 7-Ứng phó tình huống nguy hiểm", 
+        content: "Tình huống nguy hiểm; Cách ứng phó", 
+        requirements: "Nêu được cách ứng phó trong các tình huống nguy hiểm thường gặp.",
+        mc: { know: 3, understand: 1, apply: 0, highApply: 0 },
+        tf: { know: 1, understand: 0, apply: 0, highApply: 0 },
+        sa: { know: 0, understand: 0, apply: 0, highApply: 0 },
+        essay: { know: 0, understand: 0, apply: 1, highApply: 0 },
+        physicsCompetency: PHYSICS_COMPETENCIES[0]
+      }
+    ]);
+    
+    // Reset Exam states
+    setExamNotes("");
+    setExamSourceFile(null);
+    setExamSourceText("");
+    setExamMatrixFile(null);
+    setUseManualMatrix(true);
+    setExamData(null);
+    
+    // Clear API Key
+    setUserApiKey("");
+    localStorage.removeItem("gemini_api_key");
+    
+    toast.success("Đã xóa sạch dữ liệu phiên làm việc.");
+  };
+
+  // Visit Counter Logic
+  useEffect(() => {
+    const statsDocRef = doc(db, "stats", "global");
+
+    const trackVisit = async () => {
+      try {
+        const docSnap = await getDoc(statsDocRef);
+        if (docSnap.exists()) {
+          await updateDoc(statsDocRef, {
+            visitCount: increment(1)
+          });
+        } else {
+          await setDoc(statsDocRef, {
+            visitCount: 1
+          });
+        }
+      } catch (err) {
+        console.error("Error tracking visit:", err);
+      }
+    };
+
+    trackVisit();
+
+    // Listen for real-time updates
+    const unsubscribe = onSnapshot(statsDocRef, (doc) => {
+      if (doc.exists()) {
+        setVisitCount(doc.data().visitCount);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Matrix State
+  const [matrixSubject, setMatrixSubject] = useState<"general" | "physics">("general");
+  const [matrixRows, setMatrixRows] = useState<MatrixRow[]>([
+    { 
+      id: "1", 
+      chapter: "Bài 7-Ứng phó tình huống nguy hiểm", 
+      content: "Tình huống nguy hiểm; Cách ứng phó", 
+      requirements: "Nêu được cách ứng phó trong các tình huống nguy hiểm thường gặp.",
+      mc: { know: 3, understand: 1, apply: 0, highApply: 0 },
+      tf: { know: 1, understand: 0, apply: 0, highApply: 0 },
+      sa: { know: 0, understand: 0, apply: 0, highApply: 0 },
+      essay: { know: 0, understand: 0, apply: 1, highApply: 0 },
+      physicsCompetency: PHYSICS_COMPETENCIES[0]
+    }
+  ]);
+
+  // Exam State
+  const [examNotes, setExamNotes] = useState("");
+  const [examSourceFile, setExamSourceFile] = useState<File | null>(null);
+  const [examSourceText, setExamSourceText] = useState("");
+  const [examMatrixFile, setExamMatrixFile] = useState<File | null>(null);
+  const [useManualMatrix, setUseManualMatrix] = useState(true);
+  const [examData, setExamData] = useState<Exam | null>(null);
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const base64String = (reader.result as string).split(',')[1];
+        resolve(base64String);
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
+  const handleSaveKey = (key: string) => {
+    setUserApiKey(key);
+    localStorage.setItem("gemini_api_key", key);
+  };
+
+  const handleGenerate = async () => {
+    if (lessonPlanMode === "create" && !topic) return;
+    if (lessonPlanMode === "integrate" && !existingLessonPlan && !pdfFile) return;
+    
+    if (!userApiKey) {
+      setError("Vui lòng nhập Gemini API Key ở góc trên bên phải để tiếp tục.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      let result;
+      if (lessonPlanMode === "create") {
+        let pdfData = undefined;
+        if (pdfFile) {
+          const base64 = await fileToBase64(pdfFile);
+          pdfData = { data: base64, mimeType: pdfFile.type };
+        }
+        result = await generateLessonPlan(userApiKey, topic, grade, duration, referenceContent, framework, pdfData);
+      } else {
+        let pdfData = undefined;
+        if (pdfFile) {
+          const base64 = await fileToBase64(pdfFile);
+          pdfData = { data: base64, mimeType: pdfFile.type };
+        }
+        result = await integrateDigitalCompetency(userApiKey, existingLessonPlan, framework, pdfData);
+      }
+      
+      if (result) {
+        setLessonPlan(result);
+      } else {
+        setError("Không thể tạo giáo án. Vui lòng thử lại.");
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Đã xảy ra lỗi trong quá trình xử lý giáo án.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExportDocx = async () => {
+    if (!lessonPlan) return;
+
+    const children: any[] = [];
+    const lines = lessonPlan.split("\n");
+    let i = 0;
+    
+    while (i < lines.length) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      
+      if (!trimmed) {
+        i++;
+        continue;
+      }
+
+      // Handle Tables
+      if (trimmed.startsWith("|")) {
+        const tableLines: string[] = [];
+        while (i < lines.length && lines[i].trim().startsWith("|")) {
+          tableLines.push(lines[i]);
+          i++;
+        }
+        if (tableLines.length > 0) {
+          children.push(createDocxTable(tableLines));
+          children.push(new Paragraph({ text: "" })); // Spacer
+        }
+        continue;
+      }
+
+      if (line.startsWith("# ")) {
+        children.push(new Paragraph({ 
+          children: parseMarkdownToRuns(line.replace("# ", "")),
+          heading: HeadingLevel.HEADING_1, 
+          spacing: { before: 400, after: 200 } 
+        }));
+      } else if (line.startsWith("## ")) {
+        children.push(new Paragraph({ 
+          children: parseMarkdownToRuns(line.replace("## ", "")),
+          heading: HeadingLevel.HEADING_2, 
+          spacing: { before: 300, after: 150 } 
+        }));
+      } else if (line.startsWith("### ")) {
+        children.push(new Paragraph({ 
+          children: parseMarkdownToRuns(line.replace("### ", "")),
+          heading: HeadingLevel.HEADING_3, 
+          spacing: { before: 200, after: 100 } 
+        }));
+      } else if (line.startsWith("- ") || line.startsWith("* ")) {
+        children.push(new Paragraph({
+          children: parseMarkdownToRuns(line.substring(2)),
+          bullet: { level: 0 },
+          spacing: { after: 120 }
+        }));
+      } else if (/^\d+\.\s/.test(line)) {
+        children.push(new Paragraph({
+          children: parseMarkdownToRuns(line.replace(/^\d+\.\s/, "")),
+          spacing: { after: 120 }
+        }));
+      } else {
+        children.push(new Paragraph({
+          children: parseMarkdownToRuns(line),
+          spacing: { after: 200 }
+        }));
+      }
+      i++;
+    }
+
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: children,
+      }],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, `GiaoAn_${topic.substring(0, 20).replace(/\s+/g, '_')}.docx`);
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleCopy = () => {
+    if (lessonPlan) {
+      navigator.clipboard.writeText(lessonPlan);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleDownload = () => {
+    if (lessonPlan) {
+      const element = document.createElement("a");
+      const file = new Blob([lessonPlan], { type: 'text/markdown' });
+      element.href = URL.createObjectURL(file);
+      element.download = `GiaoAn_${topic.substring(0, 20).replace(/\s+/g, '_')}.md`;
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+    }
+  };
+
+  const handleDuplicateExam = (exam: Exam) => {
+    // Create a new exam object based on the existing one
+    const duplicatedExam: Exam = {
+      ...exam,
+      id: Math.random().toString(36).substring(2, 9).toUpperCase(),
+      title: `${exam.title} (Bản sao)`,
+      createdAt: new Date().toISOString(),
+    };
+    setExamData(duplicatedExam);
+    setActiveTab("exam");
+    toast.success("Đã sao chép đề thi. Bạn có thể chỉnh sửa và xuất bản bản mới.");
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F8F9FA] text-[#1A1A1A] font-sans selection:bg-blue-100">
+      {/* Header */}
+      <header className="border-bottom border-[#E5E7EB] bg-white sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="bg-blue-600 p-1.5 rounded-lg">
+              <BookOpen className="w-5 h-5 text-white" />
+            </div>
+            <h1 className="text-xl font-semibold tracking-tight">Giáo Án Số</h1>
+          </div>
+          <div className="flex items-center gap-4 text-sm font-medium text-gray-500">
+            <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-full border border-gray-200">
+              <span className="text-xs text-gray-400">API Key:</span>
+              <input 
+                type="password" 
+                placeholder="Nhập Gemini API Key..." 
+                className="bg-transparent border-none outline-none text-xs w-24 focus:w-32 transition-all"
+                value={userApiKey}
+                onChange={(e) => handleSaveKey(e.target.value)}
+              />
+            </div>
+            
+            {user ? (
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-8 rounded-full gap-2 text-red-500 hover:text-red-600 hover:bg-red-50" 
+                  onClick={handleResetAll}
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Xóa dữ liệu
+                </Button>
+                <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100">
+                  {userProfile?.role === "admin" ? (
+                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                  ) : (
+                    <User className="w-3 h-3 text-blue-600" />
+                  )}
+                  <span className="text-xs text-blue-700 max-w-[100px] truncate">
+                    {userProfile?.role === "pending" ? "[Chờ duyệt] " : ""}
+                    {user.displayName || user.email}
+                  </span>
+                </div>
+                <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={handleLogout}>
+                  <LogOut className="w-4 h-4 text-gray-400" />
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-8 rounded-full gap-2 text-gray-400 hover:text-red-500 hover:bg-red-50" 
+                  onClick={handleResetAll}
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Xóa dữ liệu
+                </Button>
+                <Button variant="outline" size="sm" className="h-8 rounded-full gap-2" onClick={handleLogin}>
+                  <LogIn className="w-3 h-3" />
+                  Đăng nhập GV
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 py-8 md:py-12">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
+          <div className="flex justify-center">
+            <TabsList className="bg-white border border-gray-200 p-1 rounded-xl shadow-sm">
+              <TabsTrigger value="lesson-plan" className="px-8 py-2 rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+                <BookOpen className="w-4 h-4 mr-2" />
+                Soạn giáo án
+              </TabsTrigger>
+              <TabsTrigger value="matrix" className="px-8 py-2 rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+                <TableIcon className="w-4 h-4 mr-2" />
+                Ma trận đề
+              </TabsTrigger>
+              <TabsTrigger value="exam" className="px-8 py-2 rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+                <FileText className="w-4 h-4 mr-2" />
+                Soạn đề kiểm tra
+              </TabsTrigger>
+              <TabsTrigger value="student" className="px-8 py-2 rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+                <GraduationCap className="w-4 h-4 mr-2" />
+                Khu vực Học sinh
+              </TabsTrigger>
+              {(userProfile?.role === "admin" || userProfile?.role === "teacher") && (
+                <TabsTrigger value="management" className="px-8 py-2 rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+                  <Settings className="w-4 h-4 mr-2" />
+                  Quản lý
+                </TabsTrigger>
+              )}
+            </TabsList>
+          </div>
+
+          <TabsContent value="lesson-plan">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          
+          {/* Input Section */}
+          <div className="lg:col-span-4 space-y-6">
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.5 }}
+            >
+              <Card className="border-none shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-blue-600" />
+                    Soạn giáo án & Năng lực số
+                  </CardTitle>
+                  <CardDescription>
+                    Tạo mới giáo án hoặc lồng ghép năng lực số vào giáo án đã có.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Tabs value={lessonPlanMode} onValueChange={(val: any) => setLessonPlanMode(val)} className="w-full">
+                    <TabsList className="grid w-full grid-cols-2 mb-4">
+                      <TabsTrigger value="create" className="text-xs">Soạn mới</TabsTrigger>
+                      <TabsTrigger value="integrate" className="text-xs">Lồng Năng lực số</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="create" className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700">Tên bài học / Chủ đề</label>
+                        <Textarea 
+                          placeholder="Ví dụ: Hệ mặt trời, Các phép tính số học, Lịch sử triều Nguyễn..."
+                          className="min-h-[80px] resize-none focus-visible:ring-blue-500"
+                          value={topic}
+                          onChange={(e) => setTopic(e.target.value)}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Khối lớp</label>
+                          <Input 
+                            placeholder="Ví dụ: Lớp 6"
+                            value={grade}
+                            onChange={(e) => setGrade(e.target.value)}
+                            className="focus-visible:ring-blue-500"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Thời lượng</label>
+                          <Input 
+                            placeholder="Ví dụ: 45 phút"
+                            value={duration}
+                            onChange={(e) => setDuration(e.target.value)}
+                            className="focus-visible:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <Tabs defaultValue="text" className="w-full">
+                        <TabsList className="grid w-full grid-cols-2 mb-2">
+                          <TabsTrigger value="text" className="text-xs flex items-center gap-1">
+                            <FileText className="w-3 h-3" />
+                            Văn bản
+                          </TabsTrigger>
+                          <TabsTrigger value="pdf" className="text-xs flex items-center gap-1">
+                            <FileUp className="w-3 h-3" />
+                            File PDF
+                          </TabsTrigger>
+                        </TabsList>
+                        
+                        <TabsContent value="text" className="space-y-2">
+                          <label className="text-xs font-medium text-gray-500">Nội dung tham khảo (từ PDF/Sách)</label>
+                          <Textarea 
+                            placeholder="Dán nội dung bài học từ file PDF của bạn vào đây..."
+                            className="min-h-[100px] resize-none focus-visible:ring-blue-500 text-sm"
+                            value={referenceContent}
+                            onChange={(e) => setReferenceContent(e.target.value)}
+                          />
+                        </TabsContent>
+                        
+                        <TabsContent value="pdf" className="space-y-2">
+                          <div className="flex items-center justify-center w-full">
+                            <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-all">
+                              <div className="flex flex-col items-center justify-center pt-2 pb-2">
+                                <FileUp className="w-6 h-6 mb-1 text-gray-400" />
+                                <p className="text-xs text-gray-500">
+                                  <span className="font-semibold">Tải PDF</span>
+                                </p>
+                              </div>
+                              <input 
+                                type="file" 
+                                className="hidden" 
+                                accept=".pdf" 
+                                onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+                              />
+                            </label>
+                          </div>
+                          {pdfFile && (
+                            <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-md border border-blue-100">
+                              <FileText className="w-3 h-3 text-blue-600" />
+                              <span className="text-[10px] text-blue-800 truncate max-w-[150px]">
+                                {pdfFile.name}
+                              </span>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="ml-auto h-5 w-5 p-0"
+                                onClick={() => setPdfFile(null)}
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          )}
+                        </TabsContent>
+                      </Tabs>
+                    </TabsContent>
+
+                    <TabsContent value="integrate" className="space-y-4">
+                      <Tabs defaultValue="paste" className="w-full">
+                        <TabsList className="grid w-full grid-cols-2 mb-2">
+                          <TabsTrigger value="paste" className="text-xs flex items-center gap-1">
+                            <FileText className="w-3 h-3" />
+                            Dán văn bản
+                          </TabsTrigger>
+                          <TabsTrigger value="pdf-upload" className="text-xs flex items-center gap-1">
+                            <FileUp className="w-3 h-3" />
+                            Tải PDF
+                          </TabsTrigger>
+                        </TabsList>
+
+                        <TabsContent value="paste" className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Dán giáo án cũ của bạn</label>
+                          <Textarea 
+                            placeholder="Dán toàn bộ nội dung giáo án cũ (KHBD) của bạn vào đây để AI lồng ghép thêm năng lực số..."
+                            className="min-h-[200px] resize-none focus-visible:ring-blue-500 text-sm"
+                            value={existingLessonPlan}
+                            onChange={(e) => setExistingLessonPlan(e.target.value)}
+                          />
+                        </TabsContent>
+
+                        <TabsContent value="pdf-upload" className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Tải file PDF giáo án cũ</label>
+                          <div className="flex items-center justify-center w-full">
+                            <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-all">
+                              <div className="flex flex-col items-center justify-center pt-4 pb-4">
+                                <FileUp className="w-8 h-8 mb-2 text-gray-400" />
+                                <p className="text-xs text-gray-500">
+                                  <span className="font-semibold">Click để tải PDF giáo án</span>
+                                </p>
+                              </div>
+                              <input 
+                                type="file" 
+                                className="hidden" 
+                                accept=".pdf" 
+                                onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+                              />
+                            </label>
+                          </div>
+                          {pdfFile && (
+                            <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-md border border-blue-100">
+                              <FileText className="w-4 h-4 text-blue-600" />
+                              <span className="text-xs text-blue-800 truncate max-w-[200px]">
+                                {pdfFile.name}
+                              </span>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="ml-auto h-6 w-6 p-0"
+                                onClick={() => setPdfFile(null)}
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          )}
+                        </TabsContent>
+                      </Tabs>
+                      <p className="text-[10px] text-gray-400 italic">
+                        * AI sẽ tự động phân tích các hoạt động và chèn thêm cột/nội dung Năng lực số phù hợp.
+                      </p>
+                    </TabsContent>
+                  </Tabs>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Yêu cầu bổ sung (nếu có)</label>
+                    <Textarea 
+                      placeholder="Ví dụ: Lồng ghép NLS vào cột Sản phẩm, hoặc thêm cột riêng..."
+                      className="min-h-[60px] resize-none focus-visible:ring-blue-500 text-sm"
+                      value={framework}
+                      onChange={(e) => setFramework(e.target.value)}
+                    />
+                  </div>
+                </CardContent>
+                <CardFooter>
+                  <Button 
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white transition-all"
+                    onClick={handleGenerate}
+                    disabled={loading || (lessonPlanMode === "create" ? !topic : (!existingLessonPlan && !pdfFile))}
+                  >
+                    {loading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                        Đang xử lý...
+                      </>
+                    ) : (
+                      <>
+                        {lessonPlanMode === "create" ? "Tạo giáo án ngay" : "Lồng ghép Năng lực số"}
+                        <ChevronRight className="w-4 h-4 ml-1" />
+                      </>
+                    )}
+                  </Button>
+                </CardFooter>
+              </Card>
+            </motion.div>
+
+              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex gap-3">
+                <Cpu className="w-5 h-5 text-blue-600 shrink-0" />
+                <div>
+                  <h4 className="text-sm font-semibold text-blue-900">Khung năng lực số BGD</h4>
+                  <p className="text-xs text-blue-700 mt-1 leading-relaxed">
+                    Đã tích hợp 6 nhóm năng lực số cấp THPT (L10-L12) bao gồm cả nhóm Ứng dụng AI.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+          {/* Output Section */}
+          <div className="lg:col-span-8">
+            <AnimatePresence mode="wait">
+              {!lessonPlan && !loading && !error && (
+                <motion.div
+                  key="empty"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="h-full min-h-[400px] flex flex-col items-center justify-center text-center p-8 bg-white rounded-2xl border-2 border-dashed border-gray-200"
+                >
+                  <div className="bg-gray-50 p-4 rounded-full mb-4">
+                    <GraduationCap className="w-12 h-12 text-gray-300" />
+                  </div>
+                  <h3 className="text-lg font-medium text-gray-900">Sẵn sàng hỗ trợ bạn</h3>
+                  <p className="text-gray-500 max-w-xs mt-2">
+                    Chọn chế độ "Soạn mới" hoặc "Lồng Năng lực số" ở bên trái để bắt đầu.
+                  </p>
+                </motion.div>
+              )}
+
+              {loading && (
+                <motion.div
+                  key="loading"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="space-y-6 p-8 bg-white rounded-2xl shadow-sm"
+                >
+                  <div className="space-y-2">
+                    <Skeleton className="h-8 w-3/4" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                  <div className="space-y-4">
+                    <Skeleton className="h-32 w-full" />
+                    <Skeleton className="h-32 w-full" />
+                    <Skeleton className="h-32 w-full" />
+                  </div>
+                </motion.div>
+              )}
+
+              {error && (
+                <motion.div
+                  key="error"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="p-8 bg-red-50 rounded-2xl border border-red-100 text-center"
+                >
+                  <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-red-900">Đã có lỗi xảy ra</h3>
+                  <p className="text-red-700 mt-2">{error}</p>
+                  <Button variant="outline" className="mt-4 border-red-200 text-red-700 hover:bg-red-100" onClick={handleGenerate}>
+                    Thử lại
+                  </Button>
+                </motion.div>
+              )}
+
+              {lessonPlan && !loading && (
+                <motion.div
+                  key="result"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-white rounded-2xl shadow-sm overflow-hidden flex flex-col h-full"
+                >
+                  <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-white sticky top-0 z-[5]">
+                    <div className="flex items-center gap-4 text-sm text-gray-500">
+                      <div className="flex items-center gap-1">
+                        <Clock className="w-4 h-4" />
+                        {duration}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <GraduationCap className="w-4 h-4" />
+                        {grade || "N/A"}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={handleCopy}>
+                        {copied ? <Check className="w-4 h-4 mr-2 text-green-600" /> : <Copy className="w-4 h-4 mr-2" />}
+                        {copied ? "Đã sao chép" : "Sao chép"}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handlePrint}>
+                        <Printer className="w-4 h-4 mr-2" />
+                        Xuất PDF (In)
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleExportDocx}>
+                        <FileDown className="w-4 h-4 mr-2" />
+                        Xuất Word (.docx)
+                      </Button>
+                      <Button size="sm" className="bg-gray-900 text-white hover:bg-black" onClick={handleDownload}>
+                        <Download className="w-4 h-4 mr-2" />
+                        Tải Markdown
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  <ScrollArea className="flex-1 p-8 md:p-12 print:p-0">
+                    <div className="markdown-content max-w-none">
+                      <ReactMarkdown 
+                        remarkPlugins={[remarkMath, remarkGfm]} 
+                        rehypePlugins={[rehypeKatex]}
+                      >
+                        {lessonPlan}
+                      </ReactMarkdown>
+                    </div>
+                  </ScrollArea>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </TabsContent>
+
+        <TabsContent value="matrix">
+          <MatrixGenerator 
+            rows={matrixRows} 
+            setRows={setMatrixRows} 
+            subject={matrixSubject} 
+            setSubject={setMatrixSubject} 
+          />
+        </TabsContent>
+
+        <TabsContent value="exam">
+          <ExamGenerator 
+            matrixRows={matrixRows} 
+            matrixSubject={matrixSubject} 
+            apiKey={userApiKey}
+            notes={examNotes}
+            setNotes={setExamNotes}
+            sourceFile={examSourceFile}
+            setSourceFile={setExamSourceFile}
+            sourceText={examSourceText}
+            setSourceText={setExamSourceText}
+            matrixFile={examMatrixFile}
+            setMatrixFile={setExamMatrixFile}
+            useManualMatrix={useManualMatrix}
+            setUseManualMatrix={setUseManualMatrix}
+            examData={examData}
+            setExamData={setExamData}
+          />
+        </TabsContent>
+
+        <TabsContent value="student">
+          <StudentExam />
+        </TabsContent>
+
+        <TabsContent value="management">
+          <ExamManagement userProfile={userProfile} onDuplicate={handleDuplicateExam} />
+        </TabsContent>
+      </Tabs>
+    </main>
+    <Toaster position="top-center" richColors />
+
+      <footer className="max-w-7xl mx-auto px-4 py-8 border-t border-gray-200 mt-12">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex flex-col md:flex-row items-center gap-4">
+            <p className="text-sm text-gray-500">
+              © 2026 Giáo Án Số - Công cụ hỗ trợ giáo dục 4.0
+            </p>
+            <div className="flex items-center gap-2 text-xs text-gray-400 bg-gray-50 px-3 py-1 rounded-full border border-gray-100">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>{visitCount !== null ? `${visitCount.toLocaleString()} lượt truy cập` : "Đang tải..."}</span>
+            </div>
+          </div>
+          <div className="flex gap-6 text-sm text-gray-400">
+            <Dialog>
+              <DialogTrigger>
+                <button className="hover:text-blue-600 transition-colors cursor-pointer">Hướng dẫn</button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Hướng dẫn sử dụng</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <section>
+                    <h4 className="font-bold text-blue-900 mb-2">1. Lưu ý lấy API Key</h4>
+                    <p className="text-sm text-gray-600 leading-relaxed">
+                      Ứng dụng sử dụng trí tuệ nhân tạo Gemini để soạn thảo. Bạn cần có API Key từ Google AI Studio (miễn phí) để bắt đầu. 
+                      Nhấn vào biểu tượng "Cài đặt" (hình bánh răng) ở góc trên bên phải màn hình để nhập Key của bạn.
+                    </p>
+                  </section>
+                  <section>
+                    <h4 className="font-bold text-blue-900 mb-2">2. Trình tự thực hiện</h4>
+                    <ol className="text-sm text-gray-600 list-decimal pl-5 space-y-2">
+                      <li><strong>Thiết lập Ma trận:</strong> Nhập các chủ đề, nội dung và số lượng câu hỏi theo 4 mức độ (B-H-V-VC).</li>
+                      <li><strong>Soạn đề thi:</strong> Tải lên file nguồn kiến thức (nếu có) và nhấn "Soạn đề" để AI tạo đề dựa trên ma trận.</li>
+                      <li><strong>Soạn giáo án:</strong> 
+                        <ul className="list-disc pl-5 mt-1">
+                          <li><em>Soạn mới:</em> Nhập tên bài học và AI sẽ tạo KHBD chuẩn 5512 tích hợp NLS.</li>
+                          <li><em>Lồng Năng lực số:</em> Dán giáo án cũ của bạn và AI sẽ tự động chèn thêm các yêu cầu Năng lực số vào nội dung.</li>
+                        </ul>
+                      </li>
+                      <li><strong>Xuất bản:</strong> Tải về định dạng Word (.docx) hoặc PDF để sử dụng.</li>
+                    </ol>
+                  </section>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog>
+              <DialogTrigger>
+                <button className="hover:text-blue-600 transition-colors cursor-pointer">Chính sách</button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Chính sách & Bản quyền</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="bg-amber-50 p-4 rounded-lg border border-amber-100 flex gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                    <p className="text-sm text-amber-800">
+                      <strong>Cảnh báo bản quyền:</strong> Mọi nội dung được tạo ra bởi AI chỉ mang tính chất tham khảo. Người dùng chịu trách nhiệm kiểm tra và điều chỉnh nội dung cho phù hợp với thực tế giảng dạy.
+                    </p>
+                  </div>
+                  <p className="text-sm text-gray-600 leading-relaxed">
+                    Kiến thức và cấu trúc giáo án/đề thi được thiết kế bám sát <strong>Chương trình Giáo dục phổ thông 2018</strong> của Bộ Giáo dục và Đào tạo Việt Nam.
+                  </p>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog>
+              <DialogTrigger>
+                <button className="hover:text-blue-600 transition-colors cursor-pointer">Liên hệ</button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Thông tin liên hệ</DialogTitle>
+                </DialogHeader>
+                <div className="py-8 text-center space-y-4">
+                  <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <FileText className="w-8 h-8 text-blue-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-gray-900">HVT</h3>
+                  <p className="text-blue-600 font-mono text-lg">0909091634</p>
+                  <p className="text-sm text-gray-500">Hỗ trợ kỹ thuật và đóng góp ý kiến</p>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+      </footer>
+
+      {/* Print Styles */}
+      <style>{`
+        @media print {
+          header, footer, .lg\\:col-span-4, .sticky, button {
+            display: none !important;
+          }
+          main {
+            padding: 0 !important;
+            margin: 0 !important;
+            max-width: 100% !important;
+          }
+          .lg\\:col-span-8 {
+            grid-column: span 12 / span 12 !important;
+          }
+          .rounded-2xl {
+            border-radius: 0 !important;
+            box-shadow: none !important;
+          }
+          .prose {
+            font-size: 12pt !important;
+          }
+        }
+      `}</style>
+    </div>
+  );
 }
-
-Lưu ý: 
-- MC: Trắc nghiệm 4 lựa chọn. "options" phải có 4 phần tử với "id" lần lượt là "A", "B", "C", "D".
-- TF: Trắc nghiệm Đúng/Sai theo định dạng mới. Một câu hỏi lớn có 4 ý (a, b, c, d). "options" phải chứa đúng 4 phần tử tương ứng với 4 ý này. "id" của các ý lần lượt là "a", "b", "c", "d". "text" là nội dung của ý đó và "isCorrect" là true nếu ý đó ĐÚNG, false nếu ý đó SAI.
-- SA: Trả lời ngắn.
-- ESSAY: Tự luận.
-
-YÊU CẦU VỀ CÔNG THỨC TOÁN HỌC (CỰC KỲ QUAN TRỌNG):
-- TẤT CẢ các công thức toán học, kí hiệu vật lý, hóa học, biến số (x, y, m, n...) và các biểu thức số học PHẢI được viết bằng định dạng LaTeX và bao quanh bởi dấu $ (ví dụ: $x^2$, $\sqrt{x}$, $\frac{a}{b}$, $\int_{a}^{b} f(x)dx$, $\Delta$, $\Omega$).
-- TUYỆT ĐỐI KHÔNG sử dụng chữ để mô tả kí hiệu (ví dụ: KHÔNG viết "can(x)", "can bac hai", "V" thay cho $\sqrt{x}$, KHÔNG viết "tich phan" thay cho $\int$).
-- TUYỆT ĐỐI KHÔNG sử dụng các kí hiệu máy tính thay cho kí hiệu toán học chuẩn:
-  + KHÔNG dùng * cho phép nhân, hãy dùng \cdot hoặc \times (ví dụ: $2 \cdot 3$ thay vì 2*3).
-  + KHÔNG dùng / cho phân số trong công thức phức tạp, hãy dùng \frac{...}{...} (ví dụ: $\frac{1}{2}$ thay vì 1/2).
-  + KHÔNG dùng _ hoặc ^ mà không có dấu $ bao quanh (ví dụ: $m_U$ thay vì m_U).
-- Mọi biểu thức có chứa kí hiệu toán học, dù chỉ là một biến số đơn lẻ, đều phải nằm trong cặp dấu $.
-
-VÍ DỤ SO SÁNH:
-- SAI: m_U/m_X = (N_U * 238) / (N_X * A_X)
-- ĐÚNG: $\frac{m_U}{m_X} = \frac{N_U \cdot 238}{N_X \cdot A_X}$
-- SAI: y.T
-- ĐÚNG: $y \cdot T$
-- SAI: 2^-n / (1 - 2^-n)
-- ĐÚNG: $\frac{2^{-n}}{1 - 2^{-n}}$
-`;
-
-  const contents: any[] = [{ text: prompt }];
-  
-  if (matrixFile) {
-    contents.push({
-      inlineData: {
-        data: matrixFile.data,
-        mimeType: matrixFile.mimeType
-      }
-    });
-  }
-
-  if (sourceFile) {
-    contents.push({
-      inlineData: {
-        data: sourceFile.data,
-        mimeType: sourceFile.mimeType
-      }
-    });
-  }
-
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: { parts: contents },
-    // @ts-ignore
-    generationConfig: {
-      responseMimeType: "application/json"
-    }
-  });
-
-  return response.text;
-};
-
-export const parseExistingExam = async (
-  apiKey: string,
-  notes: string,
-  sourceFile?: { data: string, mimeType: string }
-) => {
-  const ai = new GoogleGenAI({ apiKey });
-  const prompt = `
-Hãy đóng vai một chuyên gia số hóa học liệu cực kỳ cẩn thận. Nhiệm vụ của bạn là chuyển đổi TOÀN BỘ một đề kiểm tra hiện có (từ file đính kèm) thành định dạng JSON để sử dụng trên hệ thống thi trực tuyến.
-
-YÊU CẦU CẤU TRÚC ĐỀ THI (THEO CHUẨN BGD 2025):
-- PHẦN I: Câu trắc nghiệm nhiều phương án lựa chọn (MC). Thường có 18 câu. Mỗi câu 0.25 điểm.
-- PHẦN II: Câu trắc nghiệm đúng sai (TF). Thường có 4 câu. Mỗi câu có 4 ý (a, b, c, d). Cách tính điểm: Đúng 1 ý được 0.1đ, đúng 2 ý được 0.25đ, đúng 3 ý được 0.5đ, đúng 4 ý được 1.0đ.
-- PHẦN III: Câu trắc nghiệm trả lời ngắn (SA). Thường có 6 câu. Mỗi câu 0.25đ.
-
-YÊU CẦU QUAN TRỌNG NHẤT:
-- KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu hỏi nào có trong file. 
-- Nếu đề thi có nhiều phần (Trắc nghiệm, Tự luận, Đúng/Sai...), bạn phải trích xuất ĐẦY ĐỦ tất cả các phần đó.
-- Đảm bảo tính toàn vẹn của nội dung câu hỏi và các phương án lựa chọn.
-
-YÊU CẦU CHI TIẾT:
-1. Phân tích file đính kèm để trích xuất TOÀN BỘ danh sách câu hỏi.
-2. Xác định loại câu hỏi cho từng câu:
-   - MC: Trắc nghiệm 4 lựa chọn (A, B, C, D).
-   - TF: Trắc nghiệm Đúng/Sai (thường có 4 ý a, b, c, d).
-   - SA: Trả lời ngắn.
-   - ESSAY: Tự luận.
-3. Xác định mức độ (know, understand, apply, highApply) dựa trên nội dung câu hỏi.
-4. ${notes ? `LƯU Ý THÊM TỪ GIÁO VIÊN: ${notes}` : ""}
-
-YÊU CẦU ĐỊNH DẠNG ĐẦU RA (QUAN TRỌNG):
-Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (không có markdown code blocks) theo cấu trúc sau:
-{
-  "title": "Tên đề thi (trích xuất từ file hoặc tự đặt nếu không có)",
-  "subject": "Môn học",
-  "grade": "Lớp",
-  "timeLimit": 45,
-  "questions": [
-    {
-      "id": "string_unique_id",
-      "type": "MC" | "TF" | "SA" | "ESSAY",
-      "level": "know" | "understand" | "apply" | "highApply",
-      "content": "Nội dung câu hỏi",
-      "options": [ // Chỉ dành cho MC và TF
-        { "id": "string", "text": "Nội dung phương án", "isCorrect": boolean }
-      ],
-      "correctAnswer": "string", // Dành cho SA
-      "explanation": "Giải thích chi tiết và các bước giải cụ thể (BẮT BUỘC PHẢI CÓ để học sinh luyện tập)",
-      "points": number
-    }
-  ]
-}
-
-Lưu ý về ID của options:
-- MC: id phải là "A", "B", "C", "D".
-- TF: id phải là "a", "b", "c", "d".
-
-YÊU CẦU VỀ CÔNG THỨC TOÁN HỌC (CỰC KỲ QUAN TRỌNG):
-- TẤT CẢ các công thức toán học, kí hiệu vật lý, hóa học, biến số (x, y, m, n...) và các biểu thức số học PHẢI được viết bằng định dạng LaTeX và bao quanh bởi dấu $ (ví dụ: $x^2$, $\sqrt{x}$, $\frac{a}{b}$, $\int_{a}^{b} f(x)dx$, $\Delta$, $\Omega$).
-- TUYỆT ĐỐI KHÔNG sử dụng chữ để mô tả kí hiệu (ví dụ: KHÔNG viết "can(x)", "can bac hai", "V" thay cho $\sqrt{x}$, KHÔNG viết "tich phan" thay cho $\int$).
-- TUYỆT ĐỐI KHÔNG sử dụng các kí hiệu máy tính thay cho kí hiệu toán học chuẩn:
-  + KHÔNG dùng * cho phép nhân, hãy dùng \cdot hoặc \times (ví dụ: $2 \cdot 3$ thay vì 2*3).
-  + KHÔNG dùng / cho phân số trong công thức phức tạp, hãy dùng \frac{...}{...} (ví dụ: $\frac{1}{2}$ thay vì 1/2).
-  + KHÔNG dùng _ hoặc ^ mà không có dấu $ bao quanh (ví dụ: $m_U$ thay vì m_U).
-- Mọi biểu thức có chứa kí hiệu toán học, dù chỉ là một biến số đơn lẻ, đều phải nằm trong cặp dấu $.
-
-VÍ DỤ SO SÁNH:
-- SAI: m_U/m_X = (N_U * 238) / (N_X * A_X)
-- ĐÚNG: $\frac{m_U}{m_X} = \frac{N_U \cdot 238}{N_X \cdot A_X}$
-- SAI: y.T
-- ĐÚNG: $y \cdot T$
-- SAI: 2^-n / (1 - 2^-n)
-- ĐÚNG: $\frac{2^{-n}}{1 - 2^{-n}}$
-`;
-
-  const contents: any[] = [{ text: prompt }];
-  
-  if (sourceFile) {
-    contents.push({
-      inlineData: {
-        data: sourceFile.data,
-        mimeType: sourceFile.mimeType
-      }
-    });
-  } else {
-    throw new Error("Cần cung cấp file nguồn để chuyển đổi.");
-  }
-
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: { parts: contents },
-    // @ts-ignore
-    generationConfig: {
-      responseMimeType: "application/json"
-    }
-  });
-
-  return response.text;
-};
