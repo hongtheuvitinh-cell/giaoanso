@@ -53,6 +53,11 @@ export default function StudentExam() {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data() as Exam;
+        if (data.status === 'draft') {
+          toast.error("Đề thi này hiện đang là bản nháp và chưa được xuất bản.");
+          setLoading(false);
+          return;
+        }
         setExam(data);
         setTimeLeft(data.timeLimit * 60);
       } else {
@@ -112,7 +117,7 @@ export default function StudentExam() {
         if (q.type === "MC") {
           const correctOpt = q.options?.find(o => o.isCorrect);
           if (correctOpt && studentAnswer === correctOpt.id) {
-            totalScore += 0.25;
+            totalScore += q.points || 0.25;
             correctCount++;
           }
         } else if (q.type === "TF") {
@@ -133,13 +138,13 @@ export default function StudentExam() {
           }
         } else if (q.type === "SA") {
           if (studentAnswer?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase()) {
-            totalScore += 0.25;
+            totalScore += q.points || 0.25;
             correctCount++;
           }
         } else if (q.type === "ESSAY") {
           // Essay is usually manually graded, but for now we give 0 or 1
           if (studentAnswer && studentAnswer.length > 10) {
-            totalScore += 1.0;
+            totalScore += q.points || 1.0;
             correctCount++;
           }
         }
@@ -239,6 +244,9 @@ export default function StudentExam() {
                     <div className="flex justify-between items-center mb-2">
                       <Badge variant="outline" className={isCorrect ? "text-green-600 bg-green-50 border-green-100" : "text-red-600 bg-red-50 border-red-100"}>
                         Câu {idx + 1} - {isCorrect ? "Đúng" : "Sai"}
+                      </Badge>
+                      <Badge variant="secondary" className="text-[10px] uppercase bg-gray-50 text-gray-600 border-gray-100">
+                        {q.points || (q.type === "TF" ? 1.0 : 0.25)} điểm
                       </Badge>
                     </div>
                     <CardTitle className="text-lg leading-relaxed">
@@ -398,7 +406,9 @@ export default function StudentExam() {
                       <Badge variant="outline" className="text-blue-600 bg-blue-50 border-blue-100">
                         Câu {currentQuestionIdx + 1} / {exam.questions.length}
                       </Badge>
-                      <span className="text-xs text-gray-400">{currentQuestion.type}</span>
+                      <Badge variant="secondary" className="text-[10px] uppercase bg-green-50 text-green-700 border-green-100">
+                        {currentQuestion.points || (currentQuestion.type === "TF" ? 1.0 : 0.25)} điểm
+                      </Badge>
                     </div>
                     <CardTitle className="text-lg leading-relaxed">
                       <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
