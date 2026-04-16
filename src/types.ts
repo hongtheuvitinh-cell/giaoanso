@@ -40,6 +40,7 @@ export interface Exam {
   questions: Question[];
   createdAt: string;
   teacherId: string;
+  status?: 'draft' | 'published';
 }
 
 export const PHYSICS_COMPETENCIES = [
