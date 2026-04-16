@@ -230,9 +230,17 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
               <Card key={exam.id} className="border-none shadow-sm hover:shadow-md transition-all group">
                 <CardHeader className="pb-3">
                   <div className="flex justify-between items-start">
-                    <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-100 border-none">
-                      {exam.subject}
-                    </Badge>
+                    <div className="flex flex-col gap-1">
+                      <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-100 border-none w-fit">
+                        {exam.subject}
+                      </Badge>
+                      <Badge 
+                        variant="outline" 
+                        className={`text-[10px] w-fit ${exam.status === 'published' ? 'border-green-200 text-green-600 bg-green-50' : 'border-amber-200 text-amber-600 bg-amber-50'}`}
+                      >
+                        {exam.status === 'published' ? 'Đã xuất bản' : 'Bản nháp'}
+                      </Badge>
+                    </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => setPreviewExam(exam)}>
                         <Eye className="w-4 h-4" />
@@ -437,13 +445,18 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
             <div className="space-y-8 pb-12">
               {previewExam?.questions.map((q, idx) => (
                 <div key={q.id} className="space-y-4">
-                  <div className="font-medium flex gap-2">
-                    <span className="shrink-0">Câu {idx + 1}:</span>
-                    <div className="prose prose-sm max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
-                        {q.content}
-                      </ReactMarkdown>
+                  <div className="font-medium flex justify-between items-start gap-2">
+                    <div className="flex gap-2">
+                      <span className="shrink-0">Câu {idx + 1}:</span>
+                      <div className="prose prose-sm max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                          {q.content}
+                        </ReactMarkdown>
+                      </div>
                     </div>
+                    <Badge variant="secondary" className="text-[10px] shrink-0 bg-gray-50 text-gray-500 border-gray-100">
+                      {q.points || (q.type === "TF" ? 1.0 : 0.25)}đ
+                    </Badge>
                   </div>
                   {q.imageUrl && (
                     <div className="ml-4">
