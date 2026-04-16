@@ -15,6 +15,7 @@ import {
   Trash2,
   Edit2,
   Save,
+  Send,
   X,
   Eye,
   CloudUpload,
@@ -38,6 +39,7 @@ import {
 } from "@/components/ui/select";
 import { MatrixRow, Question, QuestionType, QuestionLevel, Exam } from "@/types";
 import { generateExamPaper, parseExistingExam } from "@/lib/gemini";
+import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
@@ -46,7 +48,6 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, AlignmentTyp
 import { saveAs } from "file-saver";
 import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
 import { db, doc, setDoc, auth, handleFirestoreError, OperationType } from "@/lib/firebase";
-import { toast } from "sonner";
 
 // --- Sub-components for performance ---
 
@@ -69,12 +70,16 @@ const QuestionItem = React.memo(({
 }) => {
   const [localContent, setLocalContent] = useState(q.content);
   const [debouncedContent, setDebouncedContent] = useState(q.content);
+  const [localExplanation, setLocalExplanation] = useState(q.explanation || "");
+  const [debouncedExplanation, setDebouncedExplanation] = useState(q.explanation || "");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLocalContent(q.content);
     setDebouncedContent(q.content);
-  }, [q.id]); // Only reset when switching questions, not on every content update from parent
+    setLocalExplanation(q.explanation || "");
+    setDebouncedExplanation(q.explanation || "");
+  }, [q.id]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -85,6 +90,16 @@ const QuestionItem = React.memo(({
     }, 500);
     return () => clearTimeout(timer);
   }, [localContent]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedExplanation(localExplanation);
+      if (localExplanation !== q.explanation) {
+        updateQuestion(q.id, { explanation: localExplanation });
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [localExplanation]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -162,6 +177,9 @@ const QuestionItem = React.memo(({
             <Badge variant="secondary" className="text-[10px] uppercase bg-orange-50 text-orange-700 border-orange-100">
               {q.level}
             </Badge>
+            <Badge variant="secondary" className="text-[10px] uppercase bg-green-50 text-green-700 border-green-100">
+              {q.points || 0} điểm
+            </Badge>
           </div>
           <div className="flex gap-1">
             <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-blue-600" onClick={() => setEditingId(editingId === q.id ? null : q.id)}>
@@ -175,7 +193,7 @@ const QuestionItem = React.memo(({
 
         {editingId === q.id ? (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Loại câu hỏi</label>
                 <Select value={q.type} onValueChange={(val: QuestionType) => updateQuestion(q.id, { type: val })}>
@@ -203,6 +221,16 @@ const QuestionItem = React.memo(({
                     <SelectItem value="highApply">Vận dụng cao</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Điểm số</label>
+                <Input 
+                  type="number" 
+                  step="0.05"
+                  value={q.points || 0} 
+                  onChange={(e) => updateQuestion(q.id, { points: parseFloat(e.target.value) })}
+                  className="h-8 text-xs"
+                />
               </div>
             </div>
             
@@ -354,11 +382,19 @@ const QuestionItem = React.memo(({
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-gray-400 uppercase">Giải thích chi tiết (Học sinh sẽ thấy sau khi nộp bài)</label>
               <Textarea 
-                value={q.explanation} 
-                onChange={(e) => updateQuestion(q.id, { explanation: e.target.value })}
+                value={localExplanation} 
+                onChange={(e) => setLocalExplanation(e.target.value)}
                 className="min-h-[80px] text-sm font-mono"
                 placeholder="Nhập lời giải chi tiết cho câu hỏi này..."
               />
+              <div className="mt-2 p-2 bg-amber-50 rounded border border-amber-100">
+                <div className="text-[10px] font-bold text-amber-600 uppercase mb-1">Xem trước lời giải:</div>
+                <div className="text-sm prose prose-sm max-w-none text-amber-900">
+                  <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                    {debouncedExplanation}
+                  </ReactMarkdown>
+                </div>
+              </div>
             </div>
           </div>
         ) : (
@@ -446,7 +482,7 @@ export default function ExamGenerator({
   const [copied, setCopied] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
-  const [generatorMode, setGeneratorMode] = useState<"matrix" | "import">("matrix");
+  const [generatorMode, setGeneratorMode] = useState<"matrix" | "import" | "manual">("matrix");
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -487,24 +523,54 @@ export default function ExamGenerator({
       }
 
       let result;
-      if (generatorMode === "matrix") {
-        const matrixString = useManualMatrix ? JSON.stringify(matrixRows, null, 2) : null;
-        let matrixFileData = undefined;
-        if (matrixFile && !useManualMatrix) {
-          const base64 = await fileToBase64(matrixFile);
-          matrixFileData = { data: base64, mimeType: matrixFile.type };
+      try {
+        if (generatorMode === "matrix") {
+          const matrixString = useManualMatrix ? JSON.stringify(matrixRows, null, 2) : null;
+          let matrixFileData = undefined;
+          if (matrixFile && !useManualMatrix) {
+            const base64 = await fileToBase64(matrixFile);
+            matrixFileData = { data: base64, mimeType: matrixFile.type };
+          }
+          result = await generateExamPaper(apiKey, matrixString, notes, sourceFileData, matrixFileData);
+        } else {
+          result = await parseExistingExam(apiKey, notes, sourceFileData);
         }
-        result = await generateExamPaper(apiKey, matrixString, notes, sourceFileData, matrixFileData);
-      } else {
-        result = await parseExistingExam(apiKey, notes, sourceFileData);
+      } catch (apiErr: any) {
+        console.error("API Error:", apiErr);
+        let msg = "Không thể kết nối với AI. ";
+        if (apiErr.message?.includes("429")) msg += "Bạn đã hết hạn mức (Quota) hoặc gửi yêu cầu quá nhanh.";
+        else if (apiErr.message?.includes("401")) msg += "API Key không hợp lệ.";
+        else if (apiErr.message?.includes("SAFETY")) msg += "Nội dung bị chặn bởi bộ lọc an toàn của AI.";
+        else msg += apiErr.message || "Vui lòng kiểm tra kết nối mạng.";
+        setError(msg);
+        return;
       }
 
-      const parsedExam: Exam = JSON.parse(result);
-      setExamData(parsedExam);
-      setPreviewMode(false);
-    } catch (err) {
+      if (!result) {
+        setError("AI không trả về kết quả. Vui lòng thử lại.");
+        return;
+      }
+
+      // Clean result if it has markdown blocks
+      let cleanResult = result.trim();
+      if (cleanResult.startsWith("```json")) {
+        cleanResult = cleanResult.replace(/^```json\n?/, "").replace(/\n?```$/, "");
+      } else if (cleanResult.startsWith("```")) {
+        cleanResult = cleanResult.replace(/^```\n?/, "").replace(/\n?```$/, "");
+      }
+
+      try {
+        const parsedExam: Exam = JSON.parse(cleanResult);
+        setExamData(parsedExam);
+        setPreviewMode(false);
+        toast.success("Đã bóc tách đề thi thành công!");
+      } catch (parseErr) {
+        console.error("Parse Error:", parseErr, "Result was:", result);
+        setError("Dữ liệu AI trả về không đúng định dạng. Vui lòng thử lại hoặc điều chỉnh yêu cầu.");
+      }
+    } catch (err: any) {
       console.error(err);
-      setError("Đã xảy ra lỗi khi tạo đề kiểm tra. Vui lòng thử lại.");
+      setError("Đã xảy ra lỗi hệ thống: " + (err.message || "Vui lòng thử lại."));
     } finally {
       setLoading(false);
     }
@@ -561,6 +627,15 @@ export default function ExamGenerator({
       ...examData,
       questions: examData.questions.filter(q => q.id !== id)
     });
+  };
+
+  const setPointsForPart = (type: "MC" | "TF" | "SA" | "ESSAY", points: number) => {
+    if (!examData || isNaN(points)) return;
+    setExamData({
+      ...examData,
+      questions: examData.questions.map(q => q.type === type ? { ...q, points } : q)
+    });
+    toast.success(`Đã cập nhật ${points} điểm cho tất cả câu hỏi trong phần này.`);
   };
 
   const handleExportDocx = async () => {
@@ -632,41 +707,65 @@ export default function ExamGenerator({
 
   const [publishing, setPublishing] = useState(false);
 
-  const handlePublish = async () => {
+  const handlePublish = async (status: 'draft' | 'published' = 'published') => {
     if (!examData) return;
     
     if (!auth.currentUser) {
-      toast.error("Vui lòng đăng nhập để xuất bản đề thi.", {
+      toast.error(`Vui lòng đăng nhập để ${status === 'published' ? 'xuất bản' : 'lưu'} đề thi.`, {
         description: "Nhấn nút 'Đăng nhập GV' ở góc trên bên phải."
       });
       return;
     }
 
     setPublishing(true);
-    const examId = examData.id || `exam_${Date.now()}`;
+    const examId = examData.id && examData.id !== "new-exam" ? examData.id : `exam_${Date.now()}`;
     try {
-      const finalExam = {
+      const finalExam: Exam = {
         ...examData,
         id: examId,
-        createdAt: new Date().toISOString(),
-        teacherId: auth.currentUser.uid
+        createdAt: examData.createdAt || new Date().toISOString(),
+        teacherId: auth.currentUser.uid,
+        status: status
       };
       await setDoc(doc(db, "exams", examId), finalExam);
-      toast.success("Đã xuất bản đề thi thành công!", {
-        description: `Mã đề của bạn là: ${examId}. Hãy gửi mã này cho học sinh.`,
-        duration: 10000,
-      });
+      
+      if (status === 'published') {
+        toast.success("Đã xuất bản đề thi thành công!", {
+          description: `Mã đề của bạn là: ${examId}. Hãy gửi mã này cho học sinh.`,
+          duration: 10000,
+        });
+      } else {
+        toast.success("Đã lưu bản nháp thành công!");
+      }
+      
       setExamData(finalExam);
     } catch (err) {
       try {
         handleFirestoreError(err, OperationType.WRITE, `exams/${examId}`);
       } catch (wrappedErr) {
         console.error(wrappedErr);
-        toast.error("Lỗi khi xuất bản đề thi. Vui lòng kiểm tra quyền truy cập.");
+        toast.error(`Lỗi khi ${status === 'published' ? 'xuất bản' : 'lưu'} đề thi. Vui lòng kiểm tra quyền truy cập.`);
       }
     } finally {
       setPublishing(false);
     }
+  };
+
+  const handleCreateBlank = () => {
+    const blankExam: Exam = {
+      id: "new-exam",
+      title: "Đề thi mới",
+      subject: "Môn học",
+      grade: "12",
+      timeLimit: 45,
+      questions: [],
+      createdAt: new Date().toISOString(),
+      teacherId: auth.currentUser?.uid || "",
+      status: 'draft'
+    };
+    setExamData(blankExam);
+    setPreviewMode(false);
+    toast.success("Đã tạo đề thi trống. Hãy bắt đầu thêm câu hỏi!");
   };
 
   return (
@@ -680,120 +779,158 @@ export default function ExamGenerator({
                 <FileUp className="w-5 h-5 text-blue-600" />
                 Chế độ soạn đề
               </div>
-              <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg w-full">
+              <div className="grid grid-cols-3 gap-2 p-1 bg-gray-100 rounded-lg w-full">
                 <button 
                   onClick={() => setGeneratorMode("matrix")}
-                  className={`py-2 text-xs font-medium rounded-md transition-all ${generatorMode === "matrix" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                  className={`py-2 text-[10px] font-medium rounded-md transition-all ${generatorMode === "matrix" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
                 >
                   Soạn từ Ma trận
                 </button>
                 <button 
                   onClick={() => setGeneratorMode("import")}
-                  className={`py-2 text-xs font-medium rounded-md transition-all ${generatorMode === "import" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                  className={`py-2 text-[10px] font-medium rounded-md transition-all ${generatorMode === "import" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
                 >
                   Nhập đề có sẵn
+                </button>
+                <button 
+                  onClick={() => setGeneratorMode("manual")}
+                  className={`py-2 text-[10px] font-medium rounded-md transition-all ${generatorMode === "manual" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Tạo đề trống
                 </button>
               </div>
             </CardTitle>
             <CardDescription>
               {generatorMode === "matrix" 
                 ? "Tạo đề thi mới dựa trên cấu trúc ma trận và tài liệu nguồn" 
-                : "Chuyển đổi file đề thi hiện có (PDF/Word) thành đề thi trực tuyến"}
+                : generatorMode === "import"
+                ? "Chuyển đổi file đề thi hiện có (PDF/Word) thành đề thi trực tuyến"
+                : "Tạo một đề thi hoàn toàn mới và tự nhập câu hỏi thủ công"}
             </CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-6">
-            {generatorMode === "matrix" && (
-              <div className="space-y-4">
-                <label className="text-sm font-semibold text-gray-700">Cấu trúc Ma trận</label>
-                <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
-                  <button 
-                    onClick={() => setUseManualMatrix(true)}
-                    className={`py-2 text-xs font-medium rounded-md transition-all ${useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    Dùng Ma trận đã nhập
-                  </button>
-                  <button 
-                    onClick={() => setUseManualMatrix(false)}
-                    className={`py-2 text-xs font-medium rounded-md transition-all ${!useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    Tải file Ma trận
-                  </button>
+            {generatorMode === "manual" && (
+              <div className="space-y-4 py-4">
+                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 text-center">
+                  <FileText className="w-8 h-8 text-blue-600 mx-auto mb-2" />
+                  <p className="text-sm text-blue-800 font-medium">Bắt đầu với một đề thi trống</p>
+                  <p className="text-xs text-blue-600 mt-1">Bạn sẽ tự nhập tiêu đề, môn học và thêm từng câu hỏi.</p>
                 </div>
+                <Button 
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white h-12 rounded-xl text-md font-bold"
+                  onClick={handleCreateBlank}
+                >
+                  <Plus className="w-5 h-5 mr-2" /> Tạo đề trống ngay
+                </Button>
+              </div>
+            )}
 
-                {!useManualMatrix && (
+            {generatorMode !== "manual" && (
+              <>
+                {generatorMode === "matrix" && (
+                  <div className="space-y-4">
+                    <label className="text-sm font-semibold text-gray-700">Cấu trúc Ma trận</label>
+                    <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+                      <button 
+                        onClick={() => setUseManualMatrix(true)}
+                        className={`py-2 text-xs font-medium rounded-md transition-all ${useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Dùng Ma trận đã nhập
+                      </button>
+                      <button 
+                        onClick={() => setUseManualMatrix(false)}
+                        className={`py-2 text-xs font-medium rounded-md transition-all ${!useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Tải file Ma trận
+                      </button>
+                    </div>
+
+                    {!useManualMatrix && (
+                      <div className="relative group">
+                        <input 
+                          type="file" 
+                          accept=".pdf,.docx,.csv"
+                          onChange={(e) => setMatrixFile(e.target.files?.[0] || null)}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                        />
+                        <div className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${matrixFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
+                          <FileUp className={`w-6 h-6 mx-auto mb-1 ${matrixFile ? 'text-blue-600' : 'text-gray-400'}`} />
+                          <p className="text-[10px] font-medium text-gray-600">
+                            {matrixFile ? matrixFile.name : "Chọn file Ma trận"}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-gray-700">
+                    {generatorMode === "matrix" ? "Tải lên file Nội dung (Nguồn câu hỏi)" : "Tải lên file Đề thi hiện có"}
+                  </label>
                   <div className="relative group">
                     <input 
                       type="file" 
                       accept=".pdf,.docx,.csv"
-                      onChange={(e) => setMatrixFile(e.target.files?.[0] || null)}
+                      onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     />
-                    <div className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${matrixFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
-                      <FileUp className={`w-6 h-6 mx-auto mb-1 ${matrixFile ? 'text-blue-600' : 'text-gray-400'}`} />
-                      <p className="text-[10px] font-medium text-gray-600">
-                        {matrixFile ? matrixFile.name : "Chọn file Ma trận"}
+                    <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${sourceFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
+                      <FileUp className={`w-8 h-8 mx-auto mb-2 ${sourceFile ? 'text-blue-600' : 'text-gray-400'}`} />
+                      <p className="text-sm font-medium text-gray-600">
+                        {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file đề/nguồn"}
                       </p>
+                      <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
                     </div>
                   </div>
-                )}
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">
-                {generatorMode === "matrix" ? "Tải lên file Nội dung (Nguồn câu hỏi)" : "Tải lên file Đề thi hiện có"}
-              </label>
-              <div className="relative group">
-                <input 
-                  type="file" 
-                  accept=".pdf,.docx,.csv"
-                  onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                />
-                <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${sourceFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
-                  <FileUp className={`w-8 h-8 mx-auto mb-2 ${sourceFile ? 'text-blue-600' : 'text-gray-400'}`} />
-                  <p className="text-sm font-medium text-gray-600">
-                    {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file đề/nguồn"}
-                  </p>
-                  <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
                 </div>
-              </div>
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">Lưu ý thêm từ giáo viên</label>
-              <Textarea 
-                placeholder="Ví dụ: Không ra bài tập cân bằng nhiệt, tập trung vào lý thuyết sự chuyển thể..."
-                className="min-h-[120px] rounded-xl border-gray-200 focus:ring-blue-500"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-              />
-            </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-gray-700">Lưu ý thêm từ giáo viên</label>
+                  <Textarea 
+                    placeholder="Ví dụ: Không ra bài tập cân bằng nhiệt, tập trung vào lý thuyết sự chuyển thể..."
+                    className="min-h-[120px] rounded-xl border-gray-200 focus:ring-blue-500"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                </div>
 
-            {error && (
-              <div className="bg-red-50 border border-red-100 p-4 rounded-xl flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-                <p className="text-sm text-red-700">{error}</p>
-              </div>
+                {error && (
+                  <div className="bg-red-50 border border-red-100 p-4 rounded-xl space-y-3">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                      <p className="text-sm text-red-700">{error}</p>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full border-red-200 text-red-600 hover:bg-red-100 h-8 text-xs"
+                      onClick={handleGenerate}
+                    >
+                      <RefreshCw className="w-3 h-3 mr-2" /> Thử lại ngay
+                    </Button>
+                  </div>
+                )}
+
+                <Button 
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white h-12 rounded-xl text-md font-bold shadow-lg shadow-blue-200"
+                  onClick={handleGenerate}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <>
+                      <RefreshCw className="w-5 h-5 mr-2 animate-spin" />
+                      {generatorMode === "matrix" ? "Đang soạn đề..." : "Đang chuyển đổi..."}
+                    </>
+                  ) : (
+                    <>
+                      {generatorMode === "matrix" ? <Sparkles className="w-5 h-5 mr-2" /> : <CloudUpload className="w-5 h-5 mr-2" />}
+                      {generatorMode === "matrix" ? "Soạn đề theo ma trận" : "Chuyển đổi đề có sẵn"}
+                    </>
+                  )}
+                </Button>
+              </>
             )}
-
-            <Button 
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white h-12 rounded-xl text-md font-bold shadow-lg shadow-blue-200"
-              onClick={handleGenerate}
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <RefreshCw className="w-5 h-5 mr-2 animate-spin" />
-                  {generatorMode === "matrix" ? "Đang soạn đề..." : "Đang chuyển đổi..."}
-                </>
-              ) : (
-                <>
-                  {generatorMode === "matrix" ? <Sparkles className="w-5 h-5 mr-2" /> : <CloudUpload className="w-5 h-5 mr-2" />}
-                  {generatorMode === "matrix" ? "Soạn đề theo ma trận" : "Chuyển đổi đề có sẵn"}
-                </>
-              )}
-            </Button>
           </CardContent>
         </Card>
 
@@ -857,18 +994,23 @@ export default function ExamGenerator({
                   <Plus className="w-4 h-4 mr-2" />
                   Thêm câu
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleExportDocx}>
-                  <FileDown className="w-4 h-4 mr-2" />
-                  Xuất Word
-                </Button>
                 <Button 
-                  className="bg-green-600 hover:bg-green-700 text-white" 
-                  size="sm"
-                  onClick={handlePublish}
+                  variant="outline" 
+                  size="sm" 
+                  className="border-blue-200 text-blue-600 hover:bg-blue-50"
+                  onClick={() => handlePublish('draft')}
                   disabled={publishing}
                 >
-                  {publishing ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <CloudUpload className="w-4 h-4 mr-2" />}
-                  {publishing ? "Đang lưu..." : "Lưu & Xuất bản"}
+                  <Save className="w-4 h-4 mr-2" /> Lưu nháp
+                </Button>
+                <Button 
+                  className="bg-blue-600 hover:bg-blue-700 text-white" 
+                  size="sm"
+                  onClick={() => handlePublish('published')}
+                  disabled={publishing}
+                >
+                  {publishing ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+                  Xuất bản
                 </Button>
               </div>
             </div>
@@ -902,9 +1044,38 @@ export default function ExamGenerator({
                   return (
                     <React.Fragment key={q.id}>
                       {partHeader && (
-                        <div className="mt-8 mb-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
-                          <h3 className="font-bold text-blue-900">{partHeader.title}</h3>
-                          <p className="text-xs text-blue-700 mt-1">{partHeader.desc}</p>
+                        <div className="mt-8 mb-4 p-4 bg-blue-50 rounded-xl border border-blue-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div>
+                            <h3 className="font-bold text-blue-900">{partHeader.title}</h3>
+                            <p className="text-xs text-blue-700 mt-1">{partHeader.desc}</p>
+                          </div>
+                          {!previewMode && (
+                            <div className="flex items-center gap-2 bg-white p-2 rounded-lg border border-blue-200 shadow-sm">
+                              <span className="text-[10px] font-bold text-blue-600 uppercase">Sét điểm:</span>
+                              <Input 
+                                type="number" 
+                                step="0.05"
+                                defaultValue={q.points}
+                                className="w-16 h-8 text-xs font-bold"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    setPointsForPart(q.type, parseFloat((e.target as HTMLInputElement).value));
+                                  }
+                                }}
+                                id={`points-input-${q.type}`}
+                              />
+                              <Button 
+                                size="sm" 
+                                className="h-8 px-2 bg-blue-600 hover:bg-blue-700 text-white text-[10px]"
+                                onClick={() => {
+                                  const input = document.getElementById(`points-input-${q.type}`) as HTMLInputElement;
+                                  if (input) setPointsForPart(q.type, parseFloat(input.value));
+                                }}
+                              >
+                                Áp dụng
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       )}
                       <QuestionItem 
