@@ -162,6 +162,7 @@ export default function App() {
     // Reset Exam states
     setExamNotes("");
     setExamSourceFile(null);
+    setExamSourceText("");
     setExamMatrixFile(null);
     setUseManualMatrix(true);
     setExamData(null);
@@ -225,6 +226,7 @@ export default function App() {
   // Exam State
   const [examNotes, setExamNotes] = useState("");
   const [examSourceFile, setExamSourceFile] = useState<File | null>(null);
+  const [examSourceText, setExamSourceText] = useState("");
   const [examMatrixFile, setExamMatrixFile] = useState<File | null>(null);
   const [useManualMatrix, setUseManualMatrix] = useState(true);
   const [examData, setExamData] = useState<Exam | null>(null);
@@ -858,6 +860,8 @@ export default function App() {
             setNotes={setExamNotes}
             sourceFile={examSourceFile}
             setSourceFile={setExamSourceFile}
+            sourceText={examSourceText}
+            setSourceText={setExamSourceText}
             matrixFile={examMatrixFile}
             setMatrixFile={setExamMatrixFile}
             useManualMatrix={useManualMatrix}
