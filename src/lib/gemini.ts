@@ -155,10 +155,10 @@ YÊU CẦU QUAN TRỌNG VỀ CƠ CHẾ ĐỌC MA TRẬN (DỮ LIỆU JSON):
 4. ${notes ? `Lưu ý thêm: ${notes}` : ""}
 5. Nguồn nội dung: ${sourceFile ? "Sử dụng file đính kèm làm nguồn câu hỏi chính." : "Tự soạn câu hỏi dựa trên kiến thức chuẩn."}
 
-YÊU CẦU CẤU TRÚC ĐỀ (BGD 2025):
-- PHẦN I (MC): 18 câu trắc nghiệm 4 lựa chọn. Mỗi câu 0.25đ.
-- PHẦN II (TF): 4 câu trắc nghiệm Đúng/Sai. Mỗi câu có 4 ý a, b, c, d (Tổng 16 ý). Điểm tính theo chuẩn: 1 ý đúng 0.1đ, 2 ý 0.25đ, 3 ý 0.5đ, 4 ý 1đ.
-- PHẦN III (SA): 6 câu trắc nghiệm trả lời ngắn. Mỗi câu 0.25đ.
+YÊU CẦU CẤU TRÚC ĐỀ (BGD 2025 - THAM KHẢO):
+- Cấu trúc chuẩn thường gồm: PHẦN I (18 câu MC), PHẦN II (4 câu TF - 16 ý), PHẦN III (6 câu SA).
+- TUYÊN BỐ QUAN TRỌNG: Bạn PHẢI ưu tiên số lượng câu hỏi từ ma trận đã cung cấp. Nếu ma trận yêu cầu ít hơn hoặc nhiều hơn số lượng chuẩn (ví dụ chỉ có 12 câu MC), bạn phải soạn ĐÚNG số lượng đó, không được tự ý thêm cho đủ 18.
+- Thứ tự câu hỏi trong đề: Xếp theo Part I (MC) -> Part II (TF) -> Part III (SA) -> Part IV (ESSAY nếu có). Đánh số câu liên tục từ 1 đến hết đề.
 
 YÊU CẦU ĐỊNH DẠNG ĐẦU RA:
 Trả về JSON thuần túy (không có giải thích, không có markdown code blocks) theo cấu trúc:
@@ -231,9 +231,9 @@ Hãy đóng vai một chuyên gia số hóa học liệu cực kỳ cẩn thận
 ${sourceText ? `VĂN BẢN ĐỀ THI CẦN CHUYỂN ĐỔI:\n${sourceText}\n` : ""}
 
 YÊU CẦU CẤU TRÚC ĐỀ THI (THEO CHUẨN BGD 2025):
-- PHẦN I: Câu trắc nghiệm nhiều phương án lựa chọn (MC). Thường có 18 câu. Mỗi câu 0.25 điểm.
-- PHẦN II: Câu trắc nghiệm đúng sai (TF). Thường có 4 câu. Mỗi câu có 4 ý (a, b, c, d). Cách tính điểm: Đúng 1 ý được 0.1đ, đúng 2 ý được 0.25đ, đúng 3 ý được 0.5đ, đúng 4 ý được 1.0đ.
-- PHẦN III: Câu trắc nghiệm trả lời ngắn (SA). Thường có 6 câu. Mỗi câu 0.25đ.
+- Cấu trúc chuẩn thường gồm: PHẦN I (18 câu MC), PHẦN II (4 câu TF), PHẦN III (6 câu SA).
+- TUYÊN BỐ QUAN TRỌNG: Bạn PHẢI trích xuất ĐÚNG và ĐỦ số lượng câu hỏi thực tế có trong tài liệu/văn bản nguồn. Không được tự ý thêm câu hỏi để cho đủ 18 câu nếu nguồn chỉ có ít hơn.
+- Thứ tự câu hỏi: Giữ nguyên thứ tự và phân loại như đề gốc. Đánh số câu liên tục từ 1 đến hết.
 
 YÊU CẦU QUAN TRỌNG NHẤT:
 - KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu hỏi nào có trong file. 
