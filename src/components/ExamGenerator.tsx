@@ -561,13 +561,20 @@ export default function ExamGenerator({
         return;
       }
 
-      // Clean result if it has markdown blocks
+      // Clean result if it has markdown blocks or extra text
       let cleanResult = result.trim();
-      if (cleanResult.startsWith("```json")) {
-        cleanResult = cleanResult.replace(/^```json\n?/, "").replace(/\n?```$/, "");
-      } else if (cleanResult.startsWith("```")) {
-        cleanResult = cleanResult.replace(/^```\n?/, "").replace(/\n?```$/, "");
+      
+      // Remove potential text before the first '{' and after the last '}'
+      const firstBrace = cleanResult.indexOf('{');
+      const lastBrace = cleanResult.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        cleanResult = cleanResult.substring(firstBrace, lastBrace + 1);
       }
+
+      // Pre-parse cleaning for common AI mistakes
+      cleanResult = cleanResult
+        .replace(/,\s*\]/g, ']') // Remove trailing commas in arrays
+        .replace(/,\s*\}/g, '}'); // Remove trailing commas in objects
 
       try {
         const parsedExam: Exam = JSON.parse(cleanResult);
