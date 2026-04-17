@@ -1,5 +1,5 @@
 {
   "name": "Giáo Án Số",
-  "description": "Ứng dụng hỗ trợ giáo viên soạn giáo án tích hợp năng lực số sử dụng AI.",
+  "description": "Ứng dụng hỗ trợ giáo viên soạn giáo án tích hợp năng lực số và tạo đề thi trắc nghiệm theo chuẩn 2025 sử dụng AI.",
   "requestFramePermissions": []
 }
