@@ -1075,22 +1075,32 @@ export default function ExamGenerator({
                   const prevQ = idx > 0 ? examData.questions[idx - 1] : null;
                   const showHeader = !prevQ || prevQ.type !== q.type;
                   
+                  // Calculate range for this part
+                  const questionsOfThisType = examData.questions.filter(quest => quest.type === q.type);
+                  const firstIdx = examData.questions.findIndex(quest => quest.type === q.type) + 1;
+                  const lastIdx = firstIdx + questionsOfThisType.length - 1;
+
                   let partHeader = null;
                   if (showHeader) {
                     if (q.type === "MC") {
                       partHeader = {
                         title: "PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn",
-                        desc: "Thí sinh trả lời từ câu 1 đến câu 18. Mỗi câu hỏi thí sinh chỉ chọn một phương án."
+                        desc: `Thí sinh trả lời từ câu ${firstIdx} đến câu ${lastIdx}. Mỗi câu hỏi thí sinh chỉ chọn một phương án.`
                       };
                     } else if (q.type === "TF") {
                       partHeader = {
                         title: "PHẦN II. Câu trắc nghiệm đúng sai",
-                        desc: "Thí sinh trả lời từ câu 1 đến câu 4. Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn đúng hoặc sai."
+                        desc: `Thí sinh trả lời từ câu ${firstIdx} đến câu ${lastIdx}. Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn đúng hoặc sai.`
                       };
                     } else if (q.type === "SA") {
                       partHeader = {
                         title: "PHẦN III. Câu trắc nghiệm trả lời ngắn",
-                        desc: "Thí sinh trả lời từ câu 1 đến câu 6."
+                        desc: `Thí sinh trả lời từ câu ${firstIdx} đến câu ${lastIdx}.`
+                      };
+                    } else if (q.type === "ESSAY") {
+                      partHeader = {
+                        title: "PHẦN IV. Tự luận",
+                        desc: `Thí sinh trả lời từ câu ${firstIdx} đến câu ${lastIdx}.`
                       };
                     }
                   }
