@@ -144,12 +144,21 @@ Hãy đóng vai một giáo viên chuyên nghiệp và soạn một đề kiểm
 THÔNG TIN MA TRẬN ĐỀ (JSON):
 ${matrixFile ? "Cấu trúc ma trận được cung cấp trong FILE ĐÍNH KÈM." : matrixData}
 
-YÊU CẦU:
+YÊU CẦU QUAN TRỌNG VỀ CƠ CHẾ ĐỌC MA TRẬN (DỮ LIỆU JSON):
 1. Bạn phải soạn đề thi bám sát HOÀN TOÀN vào ma trận dữ liệu JSON ở trên. 
-2. Cộng tổng tất cả các chỉ số (mc, tf, sa, essay) cho từng mức độ (know, understand, apply, highApply) từ tất cả các dòng trong ma trận để ra được số lượng câu hỏi cần soạn cho mỗi phần.
+2. Cách tính số lượng câu hỏi:
+   - Đối với trắc nghiệm Lựa chọn (đối tượng 'mc' trong JSON): Mỗi đơn vị là 1 câu hỏi (Part I).
+   - Đối với trắc nghiệm Đúng - Sai (đối tượng 'tf' trong JSON): Mỗi đơn vị là 1 Ý (mệnh đề), không phải 1 câu. Cứ mỗi 4 ý sẽ được gộp thành một CÂU HỎI LỚN trong Phần II (Phần II - 4 câu, tổng 16 ý).
+     - Ví dụ: Nếu tổng thuộc tính 'tf' của tất cả các dòng trong ma trận là 16 ý -> Bạn phải tạo ra đúng 4 câu hỏi lớn cho Phần II, mỗi câu có 4 ý a, b, c, d với độ khó tương ứng.
+   - Đối với Trả lời ngắn (đối tượng 'sa' trong JSON): Mỗi đơn vị là 1 câu hỏi (Part III).
 3. Nội dung câu hỏi phải tương ứng với 'chapter' và 'requirements' của các dòng trong ma trận.
 4. ${notes ? `Lưu ý thêm: ${notes}` : ""}
-5. Nguồn nội dung: ${sourceFile ? "Sử dụng file đính kèm làm nguồn câu hỏi chính." : "Tự soạn dựa trên kiến thức chuẩn."}
+5. Nguồn nội dung: ${sourceFile ? "Sử dụng file đính kèm làm nguồn câu hỏi chính." : "Tự soạn câu hỏi dựa trên kiến thức chuẩn."}
+
+YÊU CẦU CẤU TRÚC ĐỀ (BGD 2025):
+- PHẦN I (MC): 18 câu trắc nghiệm 4 lựa chọn. Mỗi câu 0.25đ.
+- PHẦN II (TF): 4 câu trắc nghiệm Đúng/Sai. Mỗi câu có 4 ý a, b, c, d (Tổng 16 ý). Điểm tính theo chuẩn: 1 ý đúng 0.1đ, 2 ý 0.25đ, 3 ý 0.5đ, 4 ý 1đ.
+- PHẦN III (SA): 6 câu trắc nghiệm trả lời ngắn. Mỗi câu 0.25đ.
 
 YÊU CẦU ĐỊNH DẠNG ĐẦU RA:
 Trả về JSON thuần túy (không có giải thích, không có markdown code blocks) theo cấu trúc:
