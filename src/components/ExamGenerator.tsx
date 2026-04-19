@@ -550,6 +550,7 @@ export default function ExamGenerator({
         let msg = "Không thể kết nối với AI. ";
         if (apiErr.message?.includes("429")) msg += "Bạn đã hết hạn mức (Quota) hoặc gửi yêu cầu quá nhanh.";
         else if (apiErr.message?.includes("401")) msg += "API Key không hợp lệ.";
+        else if (apiErr.message?.includes("503") || apiErr.message?.includes("high demand")) msg += "Hệ thống AI đang quá tải tạm thời. Vui lòng nghỉ ngơi ít phút và thử lại sau.";
         else if (apiErr.message?.includes("SAFETY")) msg += "Nội dung bị chặn bởi bộ lọc an toàn của AI.";
         else msg += apiErr.message || "Vui lòng kiểm tra kết nối mạng.";
         setError(msg);
@@ -564,26 +565,31 @@ export default function ExamGenerator({
       // Clean result if it has markdown blocks or extra text
       let cleanResult = result.trim();
       
-      // Remove potential text before the first '{' and after the last '}'
+      // Remove potential markdown code blocks (e.g., ```json ... ```)
+      cleanResult = cleanResult.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim();
+
+      // Find the first '{' and the last '}' to isolate the JSON object if there's surrounding text
       const firstBrace = cleanResult.indexOf('{');
       const lastBrace = cleanResult.lastIndexOf('}');
       if (firstBrace !== -1 && lastBrace !== -1) {
         cleanResult = cleanResult.substring(firstBrace, lastBrace + 1);
       }
 
-      // Pre-parse cleaning for common AI mistakes
-      cleanResult = cleanResult
-        .replace(/,\s*\]/g, ']') // Remove trailing commas in arrays
-        .replace(/,\s*\}/g, '}'); // Remove trailing commas in objects
-
+      // Pre-parse cleaning for common AI mistakes like trailing commas
+      // Note: This is defensive, AI models sometimes produce invalid JSON fragments
       try {
+        // Simple regex-based cleanup for trailing commas in arrays/objects
+        cleanResult = cleanResult
+          .replace(/,\s*([\]\}])/g, '$1') 
+          .replace(/(\r\n|\n|\r)/gm, " "); // Flatten newlines within JSON strings if any
+
         const parsedExam: Exam = JSON.parse(cleanResult);
         setExamData(parsedExam);
         setPreviewMode(false);
         toast.success("Đã bóc tách đề thi thành công!");
       } catch (parseErr) {
-        console.error("Parse Error:", parseErr, "Result was:", result);
-        setError("Dữ liệu AI trả về không đúng định dạng. Vui lòng thử lại hoặc điều chỉnh yêu cầu.");
+        console.error("Parse Error:", parseErr, "Cleaned Result was:", cleanResult);
+        setError("Dữ liệu AI trả về không đúng định dạng. Vui lòng thử lại hoặc điều chỉnh yêu cầu tài liệu.");
       }
     } catch (err: any) {
       console.error(err);
