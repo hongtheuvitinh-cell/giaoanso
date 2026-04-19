@@ -139,29 +139,28 @@ export const generateExamPaper = async (
 ) => {
   const ai = new GoogleGenAI({ apiKey });
   const prompt = `
-Hãy đóng vai một giáo viên chuyên nghiệp và soạn một đề kiểm tra.
+Hãy đóng vai một chuyên gia khảo thí. Nhiệm vụ của bạn là soạn một đề kiểm tra hoàn chỉnh bám sát cấu trúc của Bộ Giáo dục (chuẩn 2025).
 
 THÔNG TIN MA TRẬN ĐỀ (JSON):
 ${matrixFile ? "Cấu trúc ma trận được cung cấp trong FILE ĐÍNH KÈM." : matrixData}
 
-YÊU CẦU QUAN TRỌNG VỀ CƠ CHẾ ĐỌC MA TRẬN (DỮ LIỆU JSON):
-1. Bạn phải soạn đề thi bám sát HOÀN TOÀN vào ma trận dữ liệu JSON ở trên. 
+YÊU CẦU QUAN TRỌNG VỀ ĐỌC MA TRẬN:
+1. Bạn phải soạn đề bám sát HOÀN TOÀN vào ma trận dữ liệu JSON ở trên. 
 2. Cách tính số lượng câu hỏi:
-   - Đối với trắc nghiệm Lựa chọn (đối tượng 'mc' trong JSON): Mỗi đơn vị là 1 câu hỏi (Part I).
-   - Đối với trắc nghiệm Đúng - Sai (đối tượng 'tf' trong JSON): Mỗi đơn vị là 1 Ý (mệnh đề), không phải 1 câu. Cứ mỗi 4 ý sẽ được gộp thành một CÂU HỎI LỚN trong Phần II (Phần II - 4 câu, tổng 16 ý).
-     - Ví dụ: Nếu tổng thuộc tính 'tf' của tất cả các dòng trong ma trận là 16 ý -> Bạn phải tạo ra đúng 4 câu hỏi lớn cho Phần II, mỗi câu có 4 ý a, b, c, d với độ khó tương ứng.
-   - Đối với Trả lời ngắn (đối tượng 'sa' trong JSON): Mỗi đơn vị là 1 câu hỏi (Part III).
-3. Nội dung câu hỏi phải tương ứng với 'chapter' và 'requirements' của các dòng trong ma trận.
-4. ${notes ? `Lưu ý thêm: ${notes}` : ""}
-5. Nguồn nội dung: ${sourceFile ? "Sử dụng file đính kèm làm nguồn câu hỏi chính." : "Tự soạn câu hỏi dựa trên kiến thức chuẩn."}
+   - mc (Trắc nghiệm Lựa chọn): Mỗi đơn vị là 1 câu hỏi (Phần I).
+   - tf (Trắc nghiệm Đúng - Sai): Mỗi đơn vị là 1 Ý (mệnh đề). Cứ 4 ý sẽ gộp thành 1 câu hỏi lớn (Phần II).
+     - Ví dụ: Tổng ma trận có 16 ý TF -> Tạo đúng 4 câu hỏi lớn, mỗi câu 4 ý a, b, c, d.
+   - sa (Trả lời ngắn): Mỗi đơn vị là 1 câu hỏi (Phần III).
+3. Nội dung phải tương ứng với 'chapter' và 'requirements' trong ma trận.
+4. ${notes ? `Lưu ý đặc biệt: ${notes}` : ""}
+5. Nguồn nội dung: ${sourceFile ? "Sử dụng file đính kèm làm nguồn câu hỏi chính." : "Tự soạn câu hỏi chuẩn kiến thức."}
 
-YÊU CẦU CẤU TRÚC ĐỀ (BGD 2025 - THAM KHẢO):
-- Cấu trúc chuẩn thường gồm: PHẦN I (18 câu MC), PHẦN II (4 câu TF - 16 ý), PHẦN III (6 câu SA).
-- TUYÊN BỐ QUAN TRỌNG: Bạn PHẢI ưu tiên số lượng câu hỏi từ ma trận đã cung cấp. Nếu ma trận yêu cầu ít hơn hoặc nhiều hơn số lượng chuẩn (ví dụ chỉ có 12 câu MC), bạn phải soạn ĐÚNG số lượng đó, không được tự ý thêm cho đủ 18.
-- Thứ tự câu hỏi trong đề: Xếp theo Part I (MC) -> Part II (TF) -> Part III (SA) -> Part IV (ESSAY nếu có). Đánh số câu liên tục từ 1 đến hết đề.
+YÊU CẦU LaTeX (BẮT BUỘC):
+- TẤT CẢ công thức, kí hiệu (x, y, ρ, Δt, ...), biểu thức số học PHẢI viết bằng LaTeX và bao quanh bởi dấu $ (ví dụ: $x^2$, $\Delta t$, $\rho_1$).
+- Kí hiệu tích phải dùng \cdot (không dùng *). Phân số dùng \frac (không dùng /).
+- Mọi biến số đơn lẻ (x, y, n, m) đều phải nằm trong $.
 
-YÊU CẦU ĐỊNH DẠNG ĐẦU RA:
-Trả về JSON thuần túy (không có giải thích, không có markdown code blocks) theo cấu trúc:
+YÊU CẦU ĐỊNH DẠNG ĐẦU RA (JSON THUẦN TÚY):
 {
   "title": "Tên đề thi",
   "subject": "Môn học",
@@ -169,22 +168,44 @@ Trả về JSON thuần túy (không có giải thích, không có markdown code
   "timeLimit": 45,
   "questions": [
     {
-      "id": "string",
-      "type": "MC" | "TF" | "SA" | "ESSAY",
-      "level": "know" | "understand" | "apply" | "highApply",
-      "content": "Nội dung câu hỏi",
-      "options": [ // Chỉ cho MC và TF. MC: 4 lựa chọn A, B, C, D. TF: 4 ý a, b, c, d.
-        { "id": "string", "text": "Nội dung", "isCorrect": boolean }
+      "id": "q1",
+      "type": "MC",
+      "level": "know",
+      "content": "Câu hỏi trắc nghiệm...",
+      "options": [
+        { "id": "A", "text": "...", "isCorrect": true },
+        { "id": "B", "text": "...", "isCorrect": false },
+        { "id": "C", "text": "...", "isCorrect": false },
+        { "id": "D", "text": "...", "isCorrect": false }
       ],
-      "correctAnswer": "string", // Chỉ cho SA
       "explanation": "Giải thích chi tiết",
-      "points": number
+      "points": 0.25
+    },
+    {
+      "id": "q2",
+      "type": "TF",
+      "level": "understand",
+      "content": "Câu hỏi đúng sai: Cho... Phát biểu sau đúng hay sai?",
+      "options": [
+        { "id": "a", "text": "Ý thứ nhất...", "isCorrect": true },
+        { "id": "b", "text": "Ý thứ hai...", "isCorrect": false },
+        { "id": "c", "text": "Ý thứ ba...", "isCorrect": true },
+        { "id": "d", "text": "Ý thứ tư...", "isCorrect": false }
+      ],
+      "explanation": "Giải thích cho từng ý a, b, c, d...",
+      "points": 1.0
+    },
+    {
+      "id": "q3",
+      "type": "SA",
+      "level": "apply",
+      "content": "Câu hỏi trả lời ngắn: Tính...",
+      "correctAnswer": "12,5",
+      "explanation": "Các bước giải chi tiết...",
+      "points": 0.25
     }
   ]
 }
-
-YÊU CẦU LaTeX:
-Mọi công thức, kí hiệu toán học/vật lý phải để trong $...$ (ví dụ: $x^2$, $\Delta t$). Không dùng kí hiệu văn bản hay kí hiệu lập trình (*, /, ^).
 `;
 
   const contents: any[] = [{ text: prompt }];
@@ -226,67 +247,41 @@ export const parseExistingExam = async (
 ) => {
   const ai = new GoogleGenAI({ apiKey });
   const prompt = `
-Hãy đóng vai một chuyên gia số hóa học liệu cực kỳ cẩn thận. Nhiệm vụ của bạn là chuyển đổi TOÀN BỘ một đề kiểm tra hiện có (từ file đính kèm hoặc văn bản được cung cấp) thành định dạng JSON để sử dụng trên hệ thống thi trực tuyến.
+Hãy đóng vai một chuyên gia số hóa học liệu. Nhiệm vụ của bạn là chuyển đổi TOÀN BỘ đề thi (từ file/văn bản) thành định dạng JSON chuẩn.
 
 ${sourceText ? `VĂN BẢN ĐỀ THI CẦN CHUYỂN ĐỔI:\n${sourceText}\n` : ""}
 
-YÊU CẦU CẤU TRÚC ĐỀ THI (THEO CHUẨN BGD 2025):
-- Cấu trúc chuẩn thường gồm: PHẦN I (18 câu MC), PHẦN II (4 câu TF), PHẦN III (6 câu SA).
-- TUYÊN BỐ QUAN TRỌNG: Bạn PHẢI trích xuất ĐÚNG và ĐỦ số lượng câu hỏi thực tế có trong tài liệu/văn bản nguồn. Không được tự ý thêm câu hỏi để cho đủ 18 câu nếu nguồn chỉ có ít hơn.
-- Thứ tự câu hỏi: Giữ nguyên thứ tự và phân loại như đề gốc. Đánh số câu liên tục từ 1 đến hết.
+YÊU CẦU QUAN TRỌNG:
+1. TRÍCH XUẤT ĐỦ số lượng thực tế có trong tài liệu. Không tự ý thêm bớt.
+2. LATEX TUYỆT ĐỐI cho công thức: Dùng $...$. Ví dụ: $\rho$, $3 \cdot 10^8$, $\frac{p_2 T_1}{p_1 T_2}$. Mọi biến số x, y, n, m đều phải nằm trong $.
+3. JSON PHẢI CHUẨN: Không có văn bản thừa, không markdown blocks. Trả về JSON theo cấu trúc dưới đây.
 
-YÊU CẦU QUAN TRỌNG NHẤT:
-- KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu hỏi nào có trong file. 
-- Nếu đề thi có nhiều phần (Trắc nghiệm, Tự luận, Đúng/Sai...), bạn phải trích xuất ĐẦY ĐỦ tất cả các phần đó.
-- Đảm bảo tính toàn vẹn của nội dung câu hỏi và các phương án lựa chọn.
-
-YÊU CẦU CHI TIẾT:
-1. Phân tích file đính kèm để trích xuất TOÀN BỘ danh sách câu hỏi.
-2. Xác định loại câu hỏi cho từng câu:
-   - MC: Trắc nghiệm 4 lựa chọn (A, B, C, D).
-   - TF: Trắc nghiệm Đúng/Sai (thường có 4 ý a, b, c, d).
-   - SA: Trả lời ngắn.
-   - ESSAY: Tự luận.
-3. Xác định mức độ (know, understand, apply, highApply) dựa trên nội dung câu hỏi.
-4. ${notes ? `LƯU Ý THÊM TỪ GIÁO VIÊN: ${notes}` : ""}
-
-YÊU CẦU ĐỊNH DẠNG ĐẦU RA (QUAN TRỌNG):
-Bạn phải trả về dữ liệu dưới dạng JSON thuần túy (tuyệt đối không có bất kỳ văn bản giải thích nào khác ở đầu hoặc cuối, không có markdown code blocks) theo cấu trúc sau:
+CẤU TRÚC JSON:
 {
-  "title": "Tên đề thi (trích xuất từ file hoặc tự đặt nếu không có)",
+  "title": "Tên đề thi (trích xuất hoặc tự đặt)",
   "subject": "Môn học",
   "grade": "Lớp",
   "timeLimit": 45,
   "questions": [
     {
-      "id": "string_unique_id",
+      "id": "string",
       "type": "MC" | "TF" | "SA" | "ESSAY",
       "level": "know" | "understand" | "apply" | "highApply",
-      "content": "Nội dung câu hỏi",
-      "options": [ // Chỉ dành cho MC và TF
-        { "id": "string", "text": "Nội dung phương án", "isCorrect": boolean }
+      "content": "Nội dung câu hỏi (chứa LaTeX nếu có)",
+      "options": [ 
+        { "id": "A/B/C/D hoặc a/b/c/d", "text": "...", "isCorrect": boolean } 
       ],
-      "correctAnswer": "string", // Dành cho SA
-      "explanation": "Giải thích chi tiết và các bước giải cụ thể (BẮT BUỘC PHẢI CÓ để học sinh luyện tập)",
-      "points": number
+      "correctAnswer": "...",
+      "explanation": "Giải thích chi tiết giải thuật - BẮT BUỘC",
+      "points": 0.25
     }
   ]
 }
 
-Lưu ý về ID của options:
-- MC: id phải là "A", "B", "C", "D".
-- TF: id phải là "a", "b", "c", "d".
-
-YÊU CẦU VỀ CÔNG THỨC TOÁN HỌC (CỰC KỲ QUAN TRỌNG):
-- TẤT CẢ công thức, kí hiệu (x, y, m_U, \Delta...), biểu thức số học PHẢI viết bằng LaTeX và bao quanh bởi dấu $ (ví dụ: $x^2$, $\frac{a}{b}$).
-- TUYỆT ĐỐI KHÔNG dùng chữ mô tả (ví dụ: KHÔNG viết "can(x)", "V" thay cho $\sqrt{x}$).
-- TUYỆT ĐỐI KHÔNG dùng kí hiệu máy tính: KHÔNG dùng * (dùng \cdot), KHÔNG dùng / trong công thức phức (dùng \frac), KHÔNG dùng _ hay ^ ngoài dấu $.
-- Mọi biến số đơn lẻ đều phải nằm trong $.
-
-VÍ DỤ:
-- SAI: m_U/m_X = (N_U * 238) / (N_X * A_X) -> ĐÚNG: $\frac{m_U}{m_X} = \frac{N_U \cdot 238}{N_X \cdot A_X}$
-- SAI: y.T -> ĐÚNG: $y \cdot T$
-- SAI: 2^-n -> ĐÚNG: $2^{-n}$
+LƯU Ý: 
+- Với MC: id options là A, B, C, D.
+- Với TF: id options là a, b, c, d. Mỗi câu TF PHẢI có đủ 4 ý (a, b, c, d).
+- ${notes ? `Ghi chú từ GV: ${notes}` : ""}
 `;
 
   const contents: any[] = [{ text: prompt }];
