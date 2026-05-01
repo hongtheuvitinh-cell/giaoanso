@@ -13,7 +13,8 @@ import {
   Clock,
   ExternalLink,
   Trophy,
-  Eye
+  Eye,
+  Edit2
 } from "lucide-react";
 import { db, collection, onSnapshot, query, where, doc, deleteDoc, updateDoc, auth, getDocs } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ interface UserProfile {
 interface ExamManagementProps {
   userProfile: UserProfile | null;
   onDuplicate?: (exam: Exam) => void;
+  onEdit?: (exam: Exam) => void;
 }
 
 interface ExamResult {
@@ -62,7 +64,7 @@ interface ExamResult {
   answers: Record<string, any>;
 }
 
-export default function ExamManagement({ userProfile, onDuplicate }: ExamManagementProps) {
+export default function ExamManagement({ userProfile, onDuplicate, onEdit }: ExamManagementProps) {
   const [exams, setExams] = useState<Exam[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [results, setResults] = useState<ExamResult[]>([]);
@@ -73,6 +75,7 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
   const [viewResult, setViewResult] = useState<ExamResult | null>(null);
+  const [deleteData, setDeleteData] = useState<{ id: string, type: 'exam' | 'result' } | null>(null);
 
   useEffect(() => {
     if (!userProfile) return;
@@ -118,10 +121,10 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
   }, [userProfile]);
 
   const handleDeleteResult = async (resultId: string) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa kết quả này?")) return;
     try {
       await deleteDoc(doc(db, "results", resultId));
       toast.success("Đã xóa kết quả thành công.");
+      setDeleteData(null);
     } catch (err) {
       console.error(err);
       toast.error("Lỗi khi xóa kết quả.");
@@ -129,7 +132,6 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
   };
 
   const handleDeleteExam = async (examId: string) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa đề thi này? Hành động này không thể hoàn tác.")) return;
     try {
       // 1. Delete associated results first
       const resultsQuery = query(collection(db, "results"), where("examId", "==", examId));
@@ -140,6 +142,7 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
       // 2. Delete the exam
       await deleteDoc(doc(db, "exams", examId));
       toast.success("Đã xóa đề thi và các kết quả liên quan thành công.");
+      setDeleteData(null);
     } catch (err) {
       console.error(err);
       toast.error("Lỗi khi xóa đề thi.");
@@ -245,10 +248,13 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => setPreviewExam(exam)}>
                         <Eye className="w-4 h-4" />
                       </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-500 hover:text-amber-700 hover:bg-amber-50" onClick={() => onEdit?.(exam)}>
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50" onClick={() => onDuplicate?.(exam)}>
                         <Copy className="w-4 h-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => handleDeleteExam(exam.id)}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => setDeleteData({ id: exam.id, type: 'exam' })}>
                         <Trash2 className="w-4 h-4" />
                       </Button>
                     </div>
@@ -327,7 +333,7 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-blue-600" onClick={() => setViewResult(res)}>
                             <Eye className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600" onClick={() => handleDeleteResult(res.id)}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600" onClick={() => setDeleteData({ id: res.id, type: 'result' })}>
                             <Trash2 className="w-4 h-4" />
                           </Button>
                         </div>
@@ -581,8 +587,8 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                       {q.type === "TF" && (
                         <div className="space-y-2">
                           {q.options?.map((opt, optIdx) => {
-                            const studentChoice = studentAnswer?.[`opt_${optIdx}`]; // "true" or "false"
-                            const isCorrect = (studentChoice === "true" && opt.isCorrect) || (studentChoice === "false" && !opt.isCorrect);
+                            const studentChoice = studentAnswer?.[`opt_${optIdx}`]; // boolean
+                            const isCorrect = (studentChoice === true && opt.isCorrect) || (studentChoice === false && !opt.isCorrect);
                             return (
                               <div key={opt.id} className="flex flex-col gap-1 p-2 bg-white rounded border border-gray-100">
                                 <div className="flex justify-between items-center gap-4">
@@ -598,9 +604,9 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   <span className="text-[10px] text-gray-500">HS chọn:</span>
-                                  <Badge variant="outline" className={`text-[10px] h-5 ${isCorrect ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-red-200 text-red-700 bg-red-50'}`}>
-                                    {studentChoice === "true" ? "Đúng" : studentChoice === "false" ? "Sai" : "Chưa chọn"}
-                                    {studentChoice && (isCorrect ? " (Chính xác)" : " (Sai)")}
+                                  <Badge variant="outline" className={`text-[10px] h-5 ${studentChoice !== undefined ? (isCorrect ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-red-200 text-red-700 bg-red-50') : 'border-gray-200 text-gray-400'}`}>
+                                    {studentChoice === true ? "Đúng" : studentChoice === false ? "Sai" : "Chưa chọn"}
+                                    {studentChoice !== undefined && (isCorrect ? " (Chính xác)" : " (Sai)")}
                                   </Badge>
                                 </div>
                               </div>
@@ -635,6 +641,37 @@ export default function ExamManagement({ userProfile, onDuplicate }: ExamManagem
                 );
               })}
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Custom Confirmation Dialog */}
+      <Dialog open={!!deleteData} onOpenChange={(open) => !open && setDeleteData(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Trash2 className="w-5 h-5" />
+              Xác nhận xóa
+            </DialogTitle>
+            <DialogDescription className="py-4">
+              {deleteData?.type === 'exam' 
+                ? "Bạn có chắc chắn muốn xóa đề thi này? Hành động này sẽ xóa vĩnh viễn đề thi và tất cả các kết quả làm bài liên quan. Thao tác này không thể hoàn tác."
+                : "Bạn có chắc chắn muốn xóa kết quả làm bài này? Thao tác này không thể hoàn tác."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-3 mt-4">
+            <Button variant="outline" onClick={() => setDeleteData(null)}>
+              Hủy bỏ
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={() => {
+                if (deleteData?.type === 'exam') handleDeleteExam(deleteData.id);
+                else if (deleteData?.type === 'result') handleDeleteResult(deleteData.id);
+              }}
+            >
+              Xác nhận xóa
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
