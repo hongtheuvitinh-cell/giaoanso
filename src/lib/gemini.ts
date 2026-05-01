@@ -148,8 +148,8 @@ YÊU CẦU QUAN TRỌNG VỀ ĐỌC MA TRẬN:
 1. Bạn phải soạn đề bám sát HOÀN TOÀN vào ma trận dữ liệu JSON ở trên. 
 2. Cách tính số lượng câu hỏi:
    - mc (Trắc nghiệm Lựa chọn): Mỗi đơn vị là 1 câu hỏi (Phần I).
-   - tf (Trắc nghiệm Đúng - Sai): Mỗi đơn vị là 1 Ý (mệnh đề). Cứ 4 ý sẽ gộp thành 1 câu hỏi lớn (Phần II).
-     - Ví dụ: Tổng ma trận có 16 ý TF -> Tạo đúng 4 câu hỏi lớn, mỗi câu 4 ý a, b, c, d.
+   - tf (Trắc nghiệm Đúng - Sai): Mỗi đơn vị là 1 Ý (mệnh đề). CỨ 4 Ý SẼ GỘP THÀNH 1 CÂU HỎI LỚN (Phần II). Các ý trong cùng một câu hỏi lớn có thể có cấp độ (B, H, V, VC) khác nhau tùy theo ma trận.
+     - Ví dụ: Nếu ma trận yêu cầu 2 ý B, 1 ý H, 1 ý V cho TF -> AI tạo 1 câu hỏi TF có 4 ý a,b,c,d (với a,b mức Biết; c mức Hiểu; d mức Vận dụng).
    - sa (Trả lời ngắn): Mỗi đơn vị là 1 câu hỏi (Phần III).
 3. Nội dung phải tương ứng với 'chapter' và 'requirements' trong ma trận.
 4. ${notes ? `Lưu ý đặc biệt: ${notes}` : ""}
