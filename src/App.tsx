@@ -40,7 +40,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { generateLessonPlan, integrateDigitalCompetency } from "@/lib/gemini";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table } from "docx";
 import { saveAs } from "file-saver";
@@ -73,6 +73,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("lesson-plan");
   const [lessonPlanMode, setLessonPlanMode] = useState<"create" | "integrate">("create");
   const [existingLessonPlan, setExistingLessonPlan] = useState("");
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Auth Logic
   useEffect(() => {
@@ -131,8 +132,6 @@ export default function App() {
   };
 
   const handleResetAll = () => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa toàn bộ dữ liệu phiên làm việc này? (Ma trận, đề thi đang soạn, nội dung giáo án... sẽ bị xóa sạch để bảo mật)")) return;
-    
     // Reset Lesson Plan states
     setTopic("");
     setGrade("");
@@ -163,6 +162,7 @@ export default function App() {
     setExamNotes("");
     setExamSourceFile(null);
     setExamSourceText("");
+    setExamSourceText(""); // This was already set above, but keeping structure
     setExamMatrixFile(null);
     setUseManualMatrix(true);
     setExamData(null);
@@ -171,6 +171,7 @@ export default function App() {
     setUserApiKey("");
     localStorage.removeItem("gemini_api_key");
     
+    setShowResetConfirm(false);
     toast.success("Đã xóa sạch dữ liệu phiên làm việc.");
   };
 
@@ -396,13 +397,34 @@ export default function App() {
     // Create a new exam object based on the existing one
     const duplicatedExam: Exam = {
       ...exam,
-      id: Math.random().toString(36).substring(2, 9).toUpperCase(),
+      id: `exam_${Date.now()}_copy`,
       title: `${exam.title} (Bản sao)`,
       createdAt: new Date().toISOString(),
+      status: 'draft'
     };
     setExamData(duplicatedExam);
     setActiveTab("exam");
     toast.success("Đã sao chép đề thi. Bạn có thể chỉnh sửa và xuất bản bản mới.");
+  };
+
+  const handleEditExam = (exam: Exam) => {
+    if (exam.status === 'published') {
+      // If published, create a copy to prevent changing live data
+      const duplicatedExam: Exam = {
+        ...exam,
+        id: `exam_${Date.now()}_edit`,
+        title: `${exam.title} (Chỉnh sửa)`,
+        createdAt: new Date().toISOString(),
+        status: 'draft'
+      };
+      setExamData(duplicatedExam);
+      toast.info("Đề thi đã xuất bản. Hệ thống đã tạo một bản sao để bạn chỉnh sửa.");
+    } else {
+      // If draft, just load it for direct editing
+      setExamData(exam);
+      toast.success("Đang mở bản nháp để chỉnh sửa.");
+    }
+    setActiveTab("exam");
   };
 
   return (
@@ -434,7 +456,7 @@ export default function App() {
                   variant="ghost" 
                   size="sm" 
                   className="h-8 rounded-full gap-2 text-red-500 hover:text-red-600 hover:bg-red-50" 
-                  onClick={handleResetAll}
+                  onClick={() => setShowResetConfirm(true)}
                 >
                   <RotateCcw className="w-3 h-3" />
                   Xóa dữ liệu
@@ -460,7 +482,7 @@ export default function App() {
                   variant="ghost" 
                   size="sm" 
                   className="h-8 rounded-full gap-2 text-gray-400 hover:text-red-500 hover:bg-red-50" 
-                  onClick={handleResetAll}
+                  onClick={() => setShowResetConfirm(true)}
                 >
                   <RotateCcw className="w-3 h-3" />
                   Xóa dữ liệu
@@ -876,11 +898,32 @@ export default function App() {
         </TabsContent>
 
         <TabsContent value="management">
-          <ExamManagement userProfile={userProfile} onDuplicate={handleDuplicateExam} />
+          <ExamManagement userProfile={userProfile} onDuplicate={handleDuplicateExam} onEdit={handleEditExam} />
         </TabsContent>
       </Tabs>
     </main>
     <Toaster position="top-center" richColors />
+
+    {/* Global Reset Confirm Dialog */}
+    <Dialog open={showResetConfirm} onOpenChange={setShowResetConfirm}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-red-600 font-bold">
+            <RotateCcw className="w-5 h-5" />
+            Xác nhận xóa trắng dữ liệu
+          </DialogTitle>
+          <DialogDescription className="py-2 text-gray-600 border-none">
+            Bạn có chắc chắn muốn xóa toàn bộ dữ liệu phiên làm việc này? 
+            <br /><br />
+            Mọi thông tin về ma trận, đề thi đang soạn, nội dung giáo án... sẽ bị xóa sạch khỏi bộ nhớ tạm để bảo mật. Hành động này cũng sẽ gỡ bỏ API Key hiện tại.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex gap-2">
+          <Button variant="outline" onClick={() => setShowResetConfirm(false)} className="flex-1 sm:flex-none">Hủy bỏ</Button>
+          <Button variant="destructive" onClick={handleResetAll} className="flex-1 sm:flex-none">Xác nhận xóa sạch</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
       <footer className="max-w-7xl mx-auto px-4 py-8 border-t border-gray-200 mt-12">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
