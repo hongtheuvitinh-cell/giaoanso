@@ -43,6 +43,14 @@ import {
   TabsList, 
   TabsTrigger 
 } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { MatrixRow, Question, QuestionType, QuestionLevel, Exam } from "@/types";
 import { generateExamPaper, parseExistingExam } from "@/lib/gemini";
 import { toast } from "sonner";
@@ -78,6 +86,9 @@ const QuestionItem = React.memo(({
   const [debouncedContent, setDebouncedContent] = useState(q.content);
   const [localExplanation, setLocalExplanation] = useState(q.explanation || "");
   const [debouncedExplanation, setDebouncedExplanation] = useState(q.explanation || "");
+  const [showImageUrlDialog, setShowImageUrlDialog] = useState(false);
+  const [pendingImageUrl, setPendingImageUrl] = useState(q.imageUrl || "");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -191,7 +202,7 @@ const QuestionItem = React.memo(({
             <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-blue-600" onClick={() => setEditingId(editingId === q.id ? null : q.id)}>
               {editingId === q.id ? <Check className="h-4 w-4" /> : <Edit2 className="h-4 w-4" />}
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600" onClick={() => deleteQuestion(q.id)}>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600" onClick={() => setShowDeleteConfirm(true)}>
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
@@ -264,8 +275,8 @@ const QuestionItem = React.memo(({
                     size="sm" 
                     className="h-6 text-[10px] text-gray-500"
                     onClick={() => {
-                      const url = window.prompt("Nhập URL hình ảnh minh họa:");
-                      if (url !== null) updateQuestion(q.id, { imageUrl: url });
+                      setPendingImageUrl(q.imageUrl || "");
+                      setShowImageUrlDialog(true);
                     }}
                   >
                     <ImageIcon className="w-3 h-3 mr-1" /> Link ảnh
@@ -446,6 +457,60 @@ const QuestionItem = React.memo(({
           </div>
         )}
       </CardContent>
+
+      {/* Image URL Dialog */}
+      <Dialog open={showImageUrlDialog} onOpenChange={setShowImageUrlDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nhập URL hình ảnh</DialogTitle>
+            <DialogDescription>
+              Dán địa chỉ (URL) hình ảnh bạn muốn hiển thị trong câu hỏi này.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center space-x-2 py-4">
+            <Input
+              placeholder="https://example.com/image.png"
+              value={pendingImageUrl}
+              onChange={(e) => setPendingImageUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  updateQuestion(q.id, { imageUrl: pendingImageUrl });
+                  setShowImageUrlDialog(false);
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowImageUrlDialog(false)}>Hủy</Button>
+            <Button onClick={() => {
+              updateQuestion(q.id, { imageUrl: pendingImageUrl });
+              setShowImageUrlDialog(false);
+            }}>Lưu thay đổi</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Trash2 className="w-5 h-5" />
+              Xác nhận xóa câu hỏi
+            </DialogTitle>
+            <DialogDescription className="py-4">
+              Bạn có chắc chắn muốn xóa câu hỏi này khỏi đề thi không? Hành động này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>Hủy bỏ</Button>
+            <Button variant="destructive" onClick={() => {
+              deleteQuestion(q.id);
+              setShowDeleteConfirm(false);
+            }}>Xác nhận xóa</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 });
@@ -493,6 +558,7 @@ export default function ExamGenerator({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
   const [generatorMode, setGeneratorMode] = useState<"matrix" | "import" | "manual">("matrix");
+  const [importMethod, setImportMethod] = useState<"file" | "text">("file");
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -527,9 +593,17 @@ export default function ExamGenerator({
 
     try {
       let sourceFileData = undefined;
-      if (sourceFile) {
+      let activeSourceText = "";
+
+      // Only prepare file data if we are in matrix mode or import-file mode
+      if ((generatorMode === "matrix" || (generatorMode === "import" && importMethod === "file")) && sourceFile) {
         const base64 = await fileToBase64(sourceFile);
         sourceFileData = { data: base64, mimeType: sourceFile.type };
+      }
+
+      // Only use text if we are in import-text mode
+      if (generatorMode === "import" && importMethod === "text") {
+        activeSourceText = sourceText;
       }
 
       let result;
@@ -543,7 +617,7 @@ export default function ExamGenerator({
           }
           result = await generateExamPaper(apiKey, matrixString, notes, sourceFileData, matrixFileData);
         } else {
-          result = await parseExistingExam(apiKey, notes, sourceFileData, sourceText);
+          result = await parseExistingExam(apiKey, notes, sourceFileData, activeSourceText);
         }
       } catch (apiErr: any) {
         console.error("API Error:", apiErr);
@@ -893,7 +967,7 @@ export default function ExamGenerator({
                   </label>
                   
                   {generatorMode === "import" && (
-                    <Tabs defaultValue="file" className="w-full">
+                    <Tabs value={importMethod} onValueChange={(val: any) => setImportMethod(val)} className="w-full">
                       <TabsList className="grid w-full grid-cols-2 mb-2">
                         <TabsTrigger value="file" className="text-xs">Tải file (PDF/Word)</TabsTrigger>
                         <TabsTrigger value="text" className="text-xs">Dán văn bản</TabsTrigger>
