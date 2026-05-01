@@ -124,8 +124,8 @@ export default function StudentExam() {
           let subCorrect = 0;
           q.options?.forEach((opt, optIdx) => {
             const studentVal = studentAnswer?.[`opt_${optIdx}`];
-            // studentVal is "true" or "false" string from RadioGroup
-            const isCorrect = (studentVal === "true" && opt.isCorrect) || (studentVal === "false" && !opt.isCorrect);
+            // studentVal is boolean true/false
+            const isCorrect = (studentVal === true && opt.isCorrect) || (studentVal === false && !opt.isCorrect);
             if (isCorrect) subCorrect++;
           });
           
@@ -233,7 +233,7 @@ export default function StudentExam() {
               if (q.type === "MC") {
                 isCorrect = studentAnswer === q.options?.find(o => o.isCorrect)?.id;
               } else if (q.type === "TF") {
-                isCorrect = q.options?.every((opt, i) => (studentAnswer?.[i] ?? false) === opt.isCorrect) ?? false;
+                isCorrect = q.options?.every((opt, i) => (studentAnswer?.[`opt_${i}`] ?? null) === opt.isCorrect) ?? false;
               } else if (q.type === "SA") {
                 isCorrect = studentAnswer?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase();
               }
@@ -280,7 +280,7 @@ export default function StudentExam() {
                     {q.type === "TF" && (
                       <div className="space-y-2">
                         {q.options?.map((opt, i) => {
-                          const studentChoice = studentAnswer?.[i];
+                          const studentChoice = studentAnswer?.[`opt_${i}`];
                           const isCorrectChoice = studentChoice === opt.isCorrect;
                           return (
                             <div key={opt.id} className={`p-3 rounded-xl border flex justify-between items-center ${
