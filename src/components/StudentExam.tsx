@@ -42,14 +42,15 @@ export default function StudentExam() {
   const [result, setResult] = useState<any>(null);
   const [showReview, setShowReview] = useState(false);
 
-  const fetchExam = async () => {
-    if (!examCode.trim()) {
+  const fetchExam = async (codeOverride?: string) => {
+    const code = (codeOverride || examCode).trim();
+    if (!code) {
       toast.error("Vui lòng nhập mã đề thi.");
       return;
     }
     setLoading(true);
     try {
-      const docRef = doc(db, "exams", examCode.trim());
+      const docRef = doc(db, "exams", code);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data() as Exam;
@@ -65,7 +66,7 @@ export default function StudentExam() {
       }
     } catch (err) {
       try {
-        handleFirestoreError(err, OperationType.GET, `exams/${examCode.trim()}`);
+        handleFirestoreError(err, OperationType.GET, `exams/${code}`);
       } catch (wrappedErr) {
         console.error(wrappedErr);
         toast.error("Lỗi khi tải đề thi.");
@@ -74,6 +75,16 @@ export default function StudentExam() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const code = searchParams.get("code") || searchParams.get("exam");
+    if (code) {
+      const trimmedCode = code.trim();
+      setExamCode(trimmedCode);
+      fetchExam(trimmedCode);
+    }
+  }, []);
 
   const startExam = () => {
     if (!studentName.trim()) {
@@ -584,7 +595,7 @@ export default function StudentExam() {
                     />
                   </div>
                 </div>
-                <Button className="w-full bg-blue-600 hover:bg-blue-700 h-12 rounded-xl font-bold" onClick={fetchExam} disabled={loading}>
+                <Button className="w-full bg-blue-600 hover:bg-blue-700 h-12 rounded-xl font-bold" onClick={() => fetchExam()} disabled={loading}>
                   {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Tìm kiếm đề thi"}
                 </Button>
               </div>
