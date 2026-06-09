@@ -14,7 +14,8 @@ import {
   ExternalLink,
   Trophy,
   Eye,
-  Edit2
+  Edit2,
+  Share2
 } from "lucide-react";
 import { db, collection, onSnapshot, query, where, doc, deleteDoc, updateDoc, auth, getDocs } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -73,6 +74,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [userSearch, setUserSearch] = useState("");
   const [resultSearch, setResultSearch] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
   const [viewResult, setViewResult] = useState<ExamResult | null>(null);
   const [deleteData, setDeleteData] = useState<{ id: string, type: 'exam' | 'result' } | null>(null);
@@ -164,6 +166,14 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     setCopiedId(text);
     setTimeout(() => setCopiedId(null), 2000);
     toast.success("Đã sao chép mã đề!");
+  };
+
+  const copyShareLink = (examId: string) => {
+    const shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?code=${examId}`;
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedLinkId(examId);
+    setTimeout(() => setCopiedLinkId(null), 2000);
+    toast.success("Đã sao chép link đề thi cho học sinh!");
   };
 
   const filteredExams = exams.filter(e => 
@@ -265,13 +275,37 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                     {new Date(exam.createdAt).toLocaleDateString("vi-VN")}
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="pb-4">
-                  <div className="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <code className="text-xs font-mono text-gray-600">{exam.id}</code>
-                    <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => copyToClipboard(exam.id)}>
-                      {copiedId === exam.id ? <Check className="w-3 h-3 text-green-600" /> : <Copy className="w-3 h-3" />}
+                <CardContent className="pb-4 space-y-3">
+                  <div className="flex items-center justify-between bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-gray-400 font-semibold uppercase">Mã đề thi</span>
+                      <code className="text-xs font-mono text-gray-600">{exam.id}</code>
+                    </div>
+                    <Button variant="ghost" size="sm" className="h-8 px-2 text-gray-500 hover:text-blue-600" onClick={() => copyToClipboard(exam.id)}>
+                      {copiedId === exam.id ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
                     </Button>
                   </div>
+
+                  {exam.status === 'published' && (
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full h-9 gap-1.5 text-xs text-blue-600 hover:text-white hover:bg-blue-600 border-blue-200 transition-all font-semibold"
+                      onClick={() => copyShareLink(exam.id)}
+                    >
+                      {copiedLinkId === exam.id ? (
+                        <>
+                          <Check className="w-4 h-4 text-green-500" />
+                          Đã sao chép link đề!
+                        </>
+                      ) : (
+                        <>
+                          <Share2 className="w-4 h-4" />
+                          Sao chép Link học sinh
+                        </>
+                      )}
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             ))}
