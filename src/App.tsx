@@ -75,6 +75,15 @@ export default function App() {
   const [existingLessonPlan, setExistingLessonPlan] = useState("");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
+  // Auto-switch to student tab if code is in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code") || params.get("exam");
+    if (code) {
+      setActiveTab("student");
+    }
+  }, []);
+
   // Auth Logic
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
