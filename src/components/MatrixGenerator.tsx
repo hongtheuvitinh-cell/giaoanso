@@ -1,428 +1,1288 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { 
-  Plus, 
-  Trash2, 
+  FileText, 
+  FileUp, 
+  Sparkles, 
   Download, 
   Printer, 
   FileDown,
-  Calculator,
-  Table as TableIcon
+  RefreshCw,
+  AlertCircle,
+  Copy,
+  Check,
+  Plus,
+  Trash2,
+  Edit2,
+  Save,
+  Send,
+  X,
+  Eye,
+  CloudUpload,
+  Image as ImageIcon,
+  ImageOff,
+  Share2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Document, Packer, Paragraph, Table, TableCell, TableRow, WidthType, AlignmentType, VerticalAlign, HeadingLevel } from "docx";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
+import { 
+  Tabs, 
+  TabsContent, 
+  TabsList, 
+  TabsTrigger 
+} from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { MatrixRow, Question, QuestionType, QuestionLevel, Exam } from "@/types";
+import { generateExamPaper, parseExistingExam } from "@/lib/gemini";
+import { toast } from "sonner";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import remarkGfm from "remark-gfm";
+import rehypeKatex from "rehype-katex";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, AlignmentType } from "docx";
 import { saveAs } from "file-saver";
+import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
+import { db, doc, setDoc, auth, handleFirestoreError, OperationType } from "@/lib/firebase";
 
-import { MatrixRow, PHYSICS_COMPETENCIES, EMPTY_LEVELS } from "@/types";
+// --- Sub-components for performance ---
 
-interface MatrixGeneratorProps {
-  rows: MatrixRow[];
-  setRows: React.Dispatch<React.SetStateAction<MatrixRow[]>>;
-  subject: "general" | "physics";
-  setSubject: (subject: "general" | "physics") => void;
-}
+const QuestionItem = React.memo(({ 
+  q, 
+  idx, 
+  editingId, 
+  setEditingId, 
+  updateQuestion, 
+  deleteQuestion,
+  previewMode 
+}: { 
+  q: Question, 
+  idx: number, 
+  editingId: string | null, 
+  setEditingId: (id: string | null) => void,
+  updateQuestion: (id: string, updates: Partial<Question>) => void,
+  deleteQuestion: (id: string) => void,
+  previewMode: boolean
+}) => {
+  const [localContent, setLocalContent] = useState(q.content);
+  const [debouncedContent, setDebouncedContent] = useState(q.content);
+  const [localExplanation, setLocalExplanation] = useState(q.explanation || "");
+  const [debouncedExplanation, setDebouncedExplanation] = useState(q.explanation || "");
+  const [showImageUrlDialog, setShowImageUrlDialog] = useState(false);
+  const [pendingImageUrl, setPendingImageUrl] = useState(q.imageUrl || "");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-export default function MatrixGenerator({ rows, setRows, subject, setSubject }: MatrixGeneratorProps) {
+  useEffect(() => {
+    setLocalContent(q.content);
+    setDebouncedContent(q.content);
+    setLocalExplanation(q.explanation || "");
+    setDebouncedExplanation(q.explanation || "");
+  }, [q.id]);
 
-  const addRow = () => {
-    const newRow: MatrixRow = {
-      id: Math.random().toString(36).substr(2, 9),
-      chapter: "",
-      content: "",
-      requirements: "",
-      mc: { ...EMPTY_LEVELS },
-      tf: { ...EMPTY_LEVELS },
-      sa: { ...EMPTY_LEVELS },
-      essay: { ...EMPTY_LEVELS },
-      physicsCompetency: subject === "physics" ? PHYSICS_COMPETENCIES[0] : undefined
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedContent(localContent);
+      if (localContent !== q.content) {
+        updateQuestion(q.id, { content: localContent });
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [localContent]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedExplanation(localExplanation);
+      if (localExplanation !== q.explanation) {
+        updateQuestion(q.id, { explanation: localExplanation });
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [localExplanation]);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 800 * 1024) {
+      toast.error("Ảnh quá lớn (tối đa 800KB). Vui lòng nén ảnh trước khi tải lên.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      updateQuestion(q.id, { imageUrl: base64 });
+      toast.success("Đã tải ảnh lên thành công!");
     };
-    setRows([...rows, newRow]);
+    reader.readAsDataURL(file);
   };
 
-  const removeRow = (id: string) => {
-    if (rows.length > 1) {
-      setRows(rows.filter(r => r.id !== id));
+  if (previewMode) {
+    return (
+      <Card className="border-none shadow-sm">
+        <CardContent className="p-6">
+          <div className="flex justify-between items-start mb-4">
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-100">
+              Câu {idx + 1}
+            </Badge>
+          </div>
+          <div className="space-y-4">
+            <div className="prose prose-sm max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                {q.content}
+              </ReactMarkdown>
+            </div>
+            {q.imageUrl && (
+              <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border border-gray-100 max-h-64 object-contain" referrerPolicy="no-referrer" />
+            )}
+            {(q.type === "MC" || q.type === "TF") && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 ml-4">
+                {q.options?.map((opt, oIdx) => (
+                  <div key={opt.id} className={`p-3 rounded-xl border flex gap-3 ${opt.isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-gray-100'}`}>
+                    <span className="font-bold">{q.type === "TF" ? String.fromCharCode(97 + oIdx) : opt.id}.</span>
+                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                      {opt.text}
+                    </ReactMarkdown>
+                  </div>
+                ))}
+              </div>
+            )}
+            {q.type === "SA" && (
+              <div className="ml-4 p-3 bg-blue-50 rounded-xl border border-blue-100 text-blue-700 flex gap-2">
+                <span className="font-bold">Đáp án:</span>
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  {q.correctAnswer || ""}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className={`border-none shadow-sm transition-all ${editingId === q.id ? 'ring-2 ring-blue-500' : ''}`}>
+      <CardContent className="p-6">
+        <div className="flex justify-between items-start mb-4">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-100">
+              Câu {idx + 1}
+            </Badge>
+            <Badge variant="secondary" className="text-[10px] uppercase">
+              {q.type}
+            </Badge>
+            <Badge variant="secondary" className="text-[10px] uppercase bg-orange-50 text-orange-700 border-orange-100">
+              {q.level}
+            </Badge>
+            <Badge variant="secondary" className="text-[10px] uppercase bg-green-50 text-green-700 border-green-100">
+              {q.points || 0} điểm
+            </Badge>
+          </div>
+          <div className="flex gap-1">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-blue-600" onClick={() => setEditingId(editingId === q.id ? null : q.id)}>
+              {editingId === q.id ? <Check className="h-4 w-4" /> : <Edit2 className="h-4 w-4" />}
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600" onClick={() => setShowDeleteConfirm(true)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+
+        {editingId === q.id ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Loại câu hỏi</label>
+                <Select value={q.type} onValueChange={(val: QuestionType) => updateQuestion(q.id, { type: val })}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MC">Trắc nghiệm</SelectItem>
+                    <SelectItem value="TF">Đúng / Sai</SelectItem>
+                    <SelectItem value="SA">Trả lời ngắn</SelectItem>
+                    <SelectItem value="ESSAY">Tự luận</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Mức độ</label>
+                <Select value={q.level} onValueChange={(val: QuestionLevel) => updateQuestion(q.id, { level: val })}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="know">Biết</SelectItem>
+                    <SelectItem value="understand">Hiểu</SelectItem>
+                    <SelectItem value="apply">Vận dụng</SelectItem>
+                    <SelectItem value="highApply">Vận dụng cao</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Điểm số</label>
+                <Input 
+                  type="number" 
+                  step="0.05"
+                  value={q.points || 0} 
+                  onChange={(e) => updateQuestion(q.id, { points: parseFloat(e.target.value) })}
+                  className="h-8 text-xs"
+                />
+              </div>
+            </div>
+            
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Nội dung câu hỏi (Hỗ trợ Latex $...$)</label>
+                <div className="flex gap-1">
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    accept="image/*" 
+                    onChange={handleImageUpload} 
+                  />
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-6 text-[10px] text-blue-600"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <FileUp className="w-3 h-3 mr-1" /> {q.imageUrl ? "Đổi ảnh" : "Tải ảnh lên"}
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-6 text-[10px] text-gray-500"
+                    onClick={() => {
+                      setPendingImageUrl(q.imageUrl || "");
+                      setShowImageUrlDialog(true);
+                    }}
+                  >
+                    <ImageIcon className="w-3 h-3 mr-1" /> Link ảnh
+                  </Button>
+                </div>
+              </div>
+              <Textarea 
+                value={localContent} 
+                onChange={(e) => setLocalContent(e.target.value)}
+                className="min-h-[80px] text-sm font-mono"
+                placeholder="Nhập nội dung câu hỏi. Ví dụ: Tính giá trị của $x$ trong phương trình $x^2 + 2x + 1 = 0$"
+              />
+              {q.imageUrl && (
+                <div className="relative mt-2 group w-full max-w-xs">
+                  <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border border-gray-200 max-h-40 object-contain bg-white" referrerPolicy="no-referrer" />
+                  <Button 
+                    variant="destructive" 
+                    size="icon" 
+                    className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => updateQuestion(q.id, { imageUrl: "" })}
+                  >
+                    <ImageOff className="w-3 h-3" />
+                  </Button>
+                </div>
+              )}
+              <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Xem trước nội dung:</div>
+                <div className="text-sm prose prose-sm max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                    {debouncedContent || "*Chưa có nội dung*"}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            </div>
+
+            {(q.type === "MC" || q.type === "TF") && q.options && (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">
+                    {q.type === "MC" ? "Các phương án (A, B, C, D)" : "Các ý Đúng/Sai (a, b, c, d)"}
+                  </label>
+                  {q.type === "TF" && q.options.length < 4 && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-6 text-[10px]"
+                      onClick={() => {
+                        const nextId = String.fromCharCode(97 + q.options!.length);
+                        updateQuestion(q.id, { 
+                          options: [...q.options!, { id: nextId, text: `Ý ${nextId}...`, isCorrect: false }] 
+                        });
+                      }}
+                    >
+                      <Plus className="w-3 h-3 mr-1" /> Thêm ý
+                    </Button>
+                  )}
+                </div>
+                {q.options.map((opt, optIdx) => (
+                  <div key={opt.id} className="flex items-center gap-2">
+                    <div className="flex flex-col items-center">
+                      <Checkbox 
+                        checked={opt.isCorrect} 
+                        onCheckedChange={(val) => {
+                          const newOpts = q.options!.map((o, i) => 
+                            q.type === "MC" 
+                              ? { ...o, isCorrect: i === optIdx ? !!val : false }
+                              : i === optIdx ? { ...o, isCorrect: !!val } : o
+                          );
+                          updateQuestion(q.id, { options: newOpts });
+                        }}
+                      />
+                      <span className="text-[8px] text-gray-400 mt-0.5">{q.type === "TF" ? (opt.isCorrect ? "Đúng" : "Sai") : "Đúng"}</span>
+                    </div>
+                    <span className="text-xs font-bold w-4">{q.type === "TF" ? String.fromCharCode(97 + optIdx) : opt.id}</span>
+                    <Input 
+                      value={opt.text} 
+                      onChange={(e) => {
+                        const newOpts = q.options!.map(o => o.id === opt.id ? { ...o, text: e.target.value } : o);
+                        updateQuestion(q.id, { options: newOpts });
+                      }}
+                      className="h-8 text-xs font-mono"
+                      placeholder="Nhập phương án..."
+                    />
+                    <div className="text-[10px] bg-white px-2 py-1 rounded border border-gray-100 min-w-[100px]">
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                        {opt.text || "..."}
+                      </ReactMarkdown>
+                    </div>
+                    {q.type === "TF" && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-6 w-6 text-gray-300 hover:text-red-500"
+                        onClick={() => {
+                          const newOpts = q.options!.filter(o => o.id !== opt.id)
+                            .map((o, i) => ({ ...o, id: String.fromCharCode(97 + i) }));
+                          updateQuestion(q.id, { options: newOpts });
+                        }}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {q.type === "SA" && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Đáp án đúng</label>
+                <Input 
+                  value={q.correctAnswer} 
+                  onChange={(e) => updateQuestion(q.id, { correctAnswer: e.target.value })}
+                  className="h-8 text-xs font-mono"
+                  placeholder="Nhập đáp án chính xác..."
+                />
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-gray-400 uppercase">Giải thích chi tiết (Học sinh sẽ thấy sau khi nộp bài)</label>
+              <Textarea 
+                value={localExplanation} 
+                onChange={(e) => setLocalExplanation(e.target.value)}
+                className="min-h-[80px] text-sm font-mono"
+                placeholder="Nhập lời giải chi tiết cho câu hỏi này..."
+              />
+              <div className="mt-2 p-2 bg-amber-50 rounded border border-amber-100">
+                <div className="text-[10px] font-bold text-amber-600 uppercase mb-1">Xem trước lời giải:</div>
+                <div className="text-sm prose prose-sm max-w-none text-amber-900">
+                  <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                    {debouncedExplanation}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="prose prose-sm max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                {q.content || "*Chưa có nội dung*"}
+              </ReactMarkdown>
+            </div>
+            {q.imageUrl && (
+              <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border border-gray-100 max-h-40 object-contain" referrerPolicy="no-referrer" />
+            )}
+            {(q.type === "MC" || q.type === "TF") && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 ml-4">
+                {q.options?.map((opt, oIdx) => (
+                  <div key={opt.id} className={`p-2 rounded border flex gap-2 ${opt.isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-gray-100'}`}>
+                    <span className="font-bold">{q.type === "TF" ? String.fromCharCode(97 + oIdx) : opt.id}.</span>
+                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                      {opt.text}
+                    </ReactMarkdown>
+                  </div>
+                ))}
+              </div>
+            )}
+            {q.type === "SA" && (
+              <div className="ml-4 p-2 bg-blue-50 rounded border border-blue-100 text-blue-700 flex gap-2">
+                <span className="font-bold">Đáp án:</span>
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  {q.correctAnswer || ""}
+                </ReactMarkdown>
+              </div>
+            )}
+            {q.explanation && (
+              <div className="mt-4 p-3 bg-amber-50 rounded-lg border border-amber-100">
+                <div className="text-[10px] font-bold text-amber-600 uppercase mb-1">Lời giải chi tiết:</div>
+                <div className="text-sm prose prose-sm max-w-none text-amber-900">
+                  <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                    {q.explanation}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+
+      {/* Image URL Dialog */}
+      <Dialog open={showImageUrlDialog} onOpenChange={setShowImageUrlDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nhập URL hình ảnh</DialogTitle>
+            <DialogDescription>
+              Dán địa chỉ (URL) hình ảnh bạn muốn hiển thị trong câu hỏi này.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center space-x-2 py-4">
+            <Input
+              placeholder="https://example.com/image.png"
+              value={pendingImageUrl}
+              onChange={(e) => setPendingImageUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  updateQuestion(q.id, { imageUrl: pendingImageUrl });
+                  setShowImageUrlDialog(false);
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowImageUrlDialog(false)}>Hủy</Button>
+            <Button onClick={() => {
+              updateQuestion(q.id, { imageUrl: pendingImageUrl });
+              setShowImageUrlDialog(false);
+            }}>Lưu thay đổi</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Trash2 className="w-5 h-5" />
+              Xác nhận xóa câu hỏi
+            </DialogTitle>
+            <DialogDescription className="py-4">
+              Bạn có chắc chắn muốn xóa câu hỏi này khỏi đề thi không? Hành động này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>Hủy bỏ</Button>
+            <Button variant="destructive" onClick={() => {
+              deleteQuestion(q.id);
+              setShowDeleteConfirm(false);
+            }}>Xác nhận xóa</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+});
+
+// --- Main component ---
+
+interface ExamGeneratorProps {
+  matrixRows: MatrixRow[];
+  matrixSubject: "general" | "physics";
+  apiKey: string;
+  notes: string;
+  setNotes: (val: string) => void;
+  sourceFile: File | null;
+  setSourceFile: (file: File | null) => void;
+  sourceText: string;
+  setSourceText: (val: string) => void;
+  matrixFile: File | null;
+  setMatrixFile: (file: File | null) => void;
+  useManualMatrix: boolean;
+  setUseManualMatrix: (val: boolean) => void;
+  examData: Exam | null;
+  setExamData: (val: Exam | null) => void;
+}
+
+export default function ExamGenerator({ 
+  matrixRows, 
+  matrixSubject, 
+  apiKey,
+  notes,
+  setNotes,
+  sourceFile,
+  setSourceFile,
+  sourceText,
+  setSourceText,
+  matrixFile,
+  setMatrixFile,
+  useManualMatrix,
+  setUseManualMatrix,
+  examData,
+  setExamData
+}: ExamGeneratorProps) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState(false);
+  const [generatorMode, setGeneratorMode] = useState<"matrix" | "import" | "manual">("matrix");
+  const [importMethod, setImportMethod] = useState<"file" | "text">("file");
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const base64String = (reader.result as string).split(',')[1];
+        resolve(base64String);
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
+  const handleGenerate = async () => {
+    if (!apiKey) {
+      setError("Vui lòng nhập Gemini API Key ở phía trên.");
+      return;
+    }
+
+    if (generatorMode === "matrix" && useManualMatrix && matrixRows.length === 0) {
+      setError("Vui lòng thiết lập ma trận đề trước khi soạn đề hoặc tải lên file ma trận.");
+      return;
+    }
+
+    if (generatorMode === "import" && !sourceFile && !sourceText) {
+      setError("Vui lòng tải lên file đề thi hoặc nhập văn bản đề thi để chuyển đổi.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      let sourceFileData = undefined;
+      let activeSourceText = "";
+
+      // Only prepare file data if we are in matrix mode or import-file mode
+      if ((generatorMode === "matrix" || (generatorMode === "import" && importMethod === "file")) && sourceFile) {
+        const base64 = await fileToBase64(sourceFile);
+        sourceFileData = { data: base64, mimeType: sourceFile.type };
+      }
+
+      // Only use text if we are in import-text mode
+      if (generatorMode === "import" && importMethod === "text") {
+        activeSourceText = sourceText;
+      }
+
+      let result;
+      try {
+        if (generatorMode === "matrix") {
+          const matrixString = useManualMatrix ? JSON.stringify(matrixRows, null, 2) : null;
+          let matrixFileData = undefined;
+          if (matrixFile && !useManualMatrix) {
+            const base64 = await fileToBase64(matrixFile);
+            matrixFileData = { data: base64, mimeType: matrixFile.type };
+          }
+          result = await generateExamPaper(apiKey, matrixString, notes, sourceFileData, matrixFileData);
+        } else {
+          result = await parseExistingExam(apiKey, notes, sourceFileData, activeSourceText);
+        }
+      } catch (apiErr: any) {
+        console.error("API Error:", apiErr);
+        let msg = "Không thể kết nối với AI. ";
+        if (apiErr.message?.includes("429")) msg += "Bạn đã hết hạn mức (Quota) hoặc gửi yêu cầu quá nhanh.";
+        else if (apiErr.message?.includes("401")) msg += "API Key không hợp lệ.";
+        else if (apiErr.message?.includes("503") || apiErr.message?.includes("high demand")) msg += "Hệ thống AI đang quá tải tạm thời. Vui lòng nghỉ ngơi ít phút và thử lại sau.";
+        else if (apiErr.message?.includes("SAFETY")) msg += "Nội dung bị chặn bởi bộ lọc an toàn của AI.";
+        else msg += apiErr.message || "Vui lòng kiểm tra kết nối mạng.";
+        setError(msg);
+        return;
+      }
+
+      if (!result) {
+        setError("AI không trả về kết quả. Vui lòng thử lại.");
+        return;
+      }
+
+      // Clean result if it has markdown blocks or extra text
+      let cleanResult = result.trim();
+      
+      // Remove potential markdown code blocks (e.g., ```json ... ```)
+      cleanResult = cleanResult.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim();
+
+      // Find the first '{' and the last '}' to isolate the JSON object if there's surrounding text
+      const firstBrace = cleanResult.indexOf('{');
+      const lastBrace = cleanResult.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        cleanResult = cleanResult.substring(firstBrace, lastBrace + 1);
+      }
+
+      // Pre-parse cleaning for common AI mistakes like trailing commas
+      // Note: This is defensive, AI models sometimes produce invalid JSON fragments
+      try {
+        // Simple regex-based cleanup for trailing commas in arrays/objects
+        cleanResult = cleanResult
+          .replace(/,\s*([\]\}])/g, '$1') 
+          .replace(/(\r\n|\n|\r)/gm, " "); // Flatten newlines within JSON strings if any
+
+        const parsedExam: Exam = JSON.parse(cleanResult);
+        setExamData(parsedExam);
+        setPreviewMode(false);
+        toast.success("Đã bóc tách đề thi thành công!");
+      } catch (parseErr) {
+        console.error("Parse Error:", parseErr, "Cleaned Result was:", cleanResult);
+        setError("Dữ liệu AI trả về không đúng định dạng. Vui lòng thử lại hoặc điều chỉnh yêu cầu tài liệu.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError("Đã xảy ra lỗi hệ thống: " + (err.message || "Vui lòng thử lại."));
+    } finally {
+      setLoading(false);
     }
   };
 
-  const updateRow = (id: string, field: string, value: any) => {
-    setRows(rows.map(r => {
-      if (r.id === id) {
-        if (field.includes('.')) {
-          const [parent, child] = field.split('.');
-          return { ...r, [parent]: { ...r[parent as keyof MatrixRow] as any, [child]: parseInt(value) || 0 } };
-        }
-        return { ...r, [field]: value };
-      }
-      return r;
-    }));
-  };
-
-  const totals = useMemo(() => {
-    const res = {
-      mc: { know: 0, understand: 0, apply: 0, highApply: 0 },
-      tf: { know: 0, understand: 0, apply: 0, highApply: 0 },
-      sa: { know: 0, understand: 0, apply: 0, highApply: 0 },
-      essay: { know: 0, understand: 0, apply: 0, highApply: 0 },
-      overall: { know: 0, understand: 0, apply: 0, highApply: 0 },
-      totalQuestions: 0,
-      totalPoints: 10
+  const addQuestion = () => {
+    const newQuestion: Question = {
+      id: Math.random().toString(36).substr(2, 9),
+      type: "MC",
+      level: "know",
+      content: "Câu hỏi mới...",
+      options: [
+        { id: "A", text: "Phương án A", isCorrect: true },
+        { id: "B", text: "Phương án B", isCorrect: false },
+        { id: "C", text: "Phương án C", isCorrect: false },
+        { id: "D", text: "Phương án D", isCorrect: false },
+      ],
+      explanation: "",
+      points: 0.25
     };
 
-    rows.forEach(r => {
-      res.mc.know += r.mc.know; res.mc.understand += r.mc.understand; res.mc.apply += r.mc.apply; res.mc.highApply += r.mc.highApply;
-      res.tf.know += r.tf.know; res.tf.understand += r.tf.understand; res.tf.apply += r.tf.apply; res.tf.highApply += r.tf.highApply;
-      res.sa.know += r.sa.know; res.sa.understand += r.sa.understand; res.sa.apply += r.sa.apply; res.sa.highApply += r.sa.highApply;
-      res.essay.know += r.essay.know; res.essay.understand += r.essay.understand; res.essay.apply += r.essay.apply; res.essay.highApply += r.essay.highApply;
-      
-      res.overall.know += (r.mc.know + r.tf.know + r.sa.know + r.essay.know);
-      res.overall.understand += (r.mc.understand + r.tf.understand + r.sa.understand + r.essay.understand);
-      res.overall.apply += (r.mc.apply + r.tf.apply + r.sa.apply + r.essay.apply);
-      res.overall.highApply += (r.mc.highApply + r.tf.highApply + r.sa.highApply + r.essay.highApply);
-    });
-
-    res.totalQuestions = res.overall.know + res.overall.understand + res.overall.apply + res.overall.highApply;
-    
-    return res;
-  }, [rows]);
-
-  const exportCSV = () => {
-    const headers = [
-      "TT", "Chu de/Chuong", "Noi dung", "Yeu cau can dat",
-      ...(subject === "physics" ? ["Nang luc Vat ly"] : []),
-      "MC_B", "MC_H", "MC_V", "MC_VC",
-      "TF_B", "TF_H", "TF_V", "TF_VC",
-      "SA_B", "SA_H", "SA_V", "SA_VC",
-      "TL_B", "TL_H", "TL_V", "TL_VC"
-    ];
-    
-    const csvRows = rows.map((r, idx) => [
-      idx + 1, r.chapter, r.content, r.requirements,
-      ...(subject === "physics" ? [r.physicsCompetency || ""] : []),
-      r.mc.know, r.mc.understand, r.mc.apply, r.mc.highApply,
-      r.tf.know, r.tf.understand, r.tf.apply, r.tf.highApply,
-      r.sa.know, r.sa.understand, r.sa.apply, r.sa.highApply,
-      r.essay.know, r.essay.understand, r.essay.apply, r.essay.highApply
-    ]);
-
-    const csvContent = [
-      headers.join(","),
-      ...csvRows.map(row => row.join(","))
-    ].join("\n");
-
-    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
-    saveAs(blob, "MaTranDeKiemTra.csv");
+    if (examData) {
+      setExamData({
+        ...examData,
+        questions: [...examData.questions, newQuestion]
+      });
+      setEditingId(newQuestion.id);
+    } else {
+      setExamData({
+        id: "new-exam",
+        title: "Đề thi mới",
+        subject: matrixSubject === "physics" ? "Vật Lý" : "Môn học khác",
+        grade: "10",
+        timeLimit: 45,
+        questions: [newQuestion],
+        createdAt: new Date().toISOString(),
+        teacherId: "current-user"
+      });
+      setEditingId(newQuestion.id);
+    }
   };
 
-  const exportWord = async () => {
-    const headerRow1 = new TableRow({
-      children: [
-        new TableCell({ children: [new Paragraph("TT")], rowSpan: 3, verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("Chủ đề/Chương")], rowSpan: 3, verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("Nội dung")], rowSpan: 3, verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("Yêu cầu cần đạt")], rowSpan: 3, verticalAlign: VerticalAlign.CENTER }),
-        ...(subject === "physics" ? [new TableCell({ children: [new Paragraph("Năng lực Vật lý")], rowSpan: 3, verticalAlign: VerticalAlign.CENTER })] : []),
-        new TableCell({ children: [new Paragraph("Mức độ đánh giá")], columnSpan: 16, verticalAlign: VerticalAlign.CENTER }),
-      ],
+  const updateQuestion = (id: string, updates: Partial<Question>) => {
+    if (!examData) return;
+    setExamData({
+      ...examData,
+      questions: examData.questions.map(q => q.id === id ? { ...q, ...updates } : q)
     });
+  };
 
-    const headerRow2 = new TableRow({
-      children: [
-        new TableCell({ children: [new Paragraph("TNKQ")], columnSpan: 12, verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("Tự luận")], columnSpan: 4, verticalAlign: VerticalAlign.CENTER }),
-      ],
+  const deleteQuestion = (id: string) => {
+    if (!examData) return;
+    setExamData({
+      ...examData,
+      questions: examData.questions.filter(q => q.id !== id)
     });
+  };
 
-    const headerRow3 = new TableRow({
-      children: [
-        new TableCell({ children: [new Paragraph("MC (B-H-V-VC)")], columnSpan: 4, verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("TF (B-H-V-VC)")], columnSpan: 4, verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("SA (B-H-V-VC)")], columnSpan: 4, verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("Biết")], verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("Hiểu")], verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("Vận dụng")], verticalAlign: VerticalAlign.CENTER }),
-        new TableCell({ children: [new Paragraph("Vận dụng cao")], verticalAlign: VerticalAlign.CENTER }),
-      ],
+  const setPointsForPart = (type: "MC" | "TF" | "SA" | "ESSAY", points: number) => {
+    if (!examData || isNaN(points)) return;
+    setExamData({
+      ...examData,
+      questions: examData.questions.map(q => q.type === type ? { ...q, points } : q)
     });
+    toast.success(`Đã cập nhật ${points} điểm cho tất cả câu hỏi trong phần này.`);
+  };
 
-    const dataRows = rows.map((r, idx) => new TableRow({
-      children: [
-        new TableCell({ children: [new Paragraph((idx + 1).toString())] }),
-        new TableCell({ children: [new Paragraph(r.chapter)] }),
-        new TableCell({ children: [new Paragraph(r.content)] }),
-        new TableCell({ children: [new Paragraph(r.requirements)] }),
-        ...(subject === "physics" ? [new TableCell({ children: [new Paragraph(r.physicsCompetency || "")] })] : []),
-        new TableCell({ children: [new Paragraph(r.mc.know.toString())] }),
-        new TableCell({ children: [new Paragraph(r.mc.understand.toString())] }),
-        new TableCell({ children: [new Paragraph(r.mc.apply.toString())] }),
-        new TableCell({ children: [new Paragraph(r.mc.highApply.toString())] }),
-        new TableCell({ children: [new Paragraph(r.tf.know.toString())] }),
-        new TableCell({ children: [new Paragraph(r.tf.understand.toString())] }),
-        new TableCell({ children: [new Paragraph(r.tf.apply.toString())] }),
-        new TableCell({ children: [new Paragraph(r.tf.highApply.toString())] }),
-        new TableCell({ children: [new Paragraph(r.sa.know.toString())] }),
-        new TableCell({ children: [new Paragraph(r.sa.understand.toString())] }),
-        new TableCell({ children: [new Paragraph(r.sa.apply.toString())] }),
-        new TableCell({ children: [new Paragraph(r.sa.highApply.toString())] }),
-        new TableCell({ children: [new Paragraph(r.essay.know.toString())] }),
-        new TableCell({ children: [new Paragraph(r.essay.understand.toString())] }),
-        new TableCell({ children: [new Paragraph(r.essay.apply.toString())] }),
-        new TableCell({ children: [new Paragraph(r.essay.highApply.toString())] }),
-      ],
-    }));
+  const handleExportDocx = async () => {
+    if (!examData) return;
 
-    const doc = new Document({
-      sections: [{
-        children: [
-          new Paragraph({ text: "MA TRẬN ĐỀ KIỂM TRA", heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
-          new Paragraph({ text: "" }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [headerRow1, headerRow2, headerRow3, ...dataRows],
-          }),
-        ]
-      }]
-    });
-    const blob = await Packer.toBlob(doc);
-    saveAs(blob, "MaTranDeKiemTra.docx");
+    try {
+      const children: any[] = [
+        new Paragraph({ text: examData.title, heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
+        new Paragraph({ text: `Môn: ${examData.subject} - Thời gian: ${examData.timeLimit} phút`, alignment: AlignmentType.CENTER }),
+        new Paragraph({ text: "" }),
+      ];
+
+      examData.questions.forEach((q, idx) => {
+        children.push(new Paragraph({
+          children: [
+            new TextRun({ text: `Câu ${idx + 1}: `, bold: true }),
+            ...parseMarkdownToRuns(q.content)
+          ],
+          spacing: { before: 200, after: 100 }
+        }));
+
+        if (q.type === "MC" && q.options) {
+          q.options.forEach(opt => {
+            children.push(new Paragraph({
+              children: [
+                new TextRun({ text: `${opt.id}. `, bold: true }),
+                new TextRun(opt.text)
+              ],
+              indent: { left: 720 },
+              spacing: { after: 60 }
+            }));
+          });
+        }
+
+        if (q.type === "TF" && q.options) {
+          q.options.forEach((opt, optIdx) => {
+            const label = String.fromCharCode(97 + optIdx); // a, b, c, d
+            children.push(new Paragraph({
+              children: [
+                new TextRun({ text: `${label}) `, bold: true }),
+                new TextRun({ text: opt.text }),
+                new TextRun({ text: "\t\t(Đúng / Sai)", italics: true, color: "666666" })
+              ],
+              indent: { left: 720 },
+              spacing: { after: 60 }
+            }));
+          });
+        }
+      });
+
+      const doc = new Document({ sections: [{ children }] });
+      const blob = await Packer.toBlob(doc);
+      saveAs(blob, `${examData.title}.docx`);
+      toast.success("Đã xuất file Word thành công!");
+    } catch (err) {
+      console.error("Export error:", err);
+      toast.error("Lỗi khi xuất file Word. Vui lòng kiểm tra lại nội dung đề.");
+    }
+  };
+
+  const handleCopy = () => {
+    if (examData) {
+      const text = examData.questions.map((q, i) => `Câu ${i+1}: ${q.content}`).join("\n\n");
+      navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const [publishing, setPublishing] = useState(false);
+
+  const handlePublish = async (status: 'draft' | 'published' = 'published') => {
+    if (!examData) return;
+    
+    if (!auth.currentUser) {
+      toast.error(`Vui lòng đăng nhập để ${status === 'published' ? 'xuất bản' : 'lưu'} đề thi.`, {
+        description: "Nhấn nút 'Đăng nhập GV' ở góc trên bên phải."
+      });
+      return;
+    }
+
+    setPublishing(true);
+    const examId = examData.id && examData.id !== "new-exam" ? examData.id : `exam_${Date.now()}`;
+    try {
+      const finalExam: Exam = {
+        ...examData,
+        id: examId,
+        createdAt: examData.createdAt || new Date().toISOString(),
+        teacherId: auth.currentUser.uid,
+        status: status
+      };
+      await setDoc(doc(db, "exams", examId), finalExam);
+      
+      if (status === 'published') {
+        const studentUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?code=${examId}`;
+        toast.success("Đã xuất bản đề thi thành công!", {
+          description: `Mã đề của bạn là: ${examId}. Hãy gửi mã hoặc gửi link trực tiếp này.`,
+          action: {
+            label: "Sao chép Link HS",
+            onClick: () => {
+              navigator.clipboard.writeText(studentUrl);
+              toast.success("Đã sao chép link đề thi cho học sinh!");
+            }
+          },
+          duration: 12000,
+        });
+      } else {
+        toast.success("Đã lưu bản nháp thành công!");
+      }
+      
+      setExamData(finalExam);
+    } catch (err) {
+      try {
+        handleFirestoreError(err, OperationType.WRITE, `exams/${examId}`);
+      } catch (wrappedErr) {
+        console.error(wrappedErr);
+        toast.error(`Lỗi khi ${status === 'published' ? 'xuất bản' : 'lưu'} đề thi. Vui lòng kiểm tra quyền truy cập.`);
+      }
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handleCreateBlank = () => {
+    const blankExam: Exam = {
+      id: "new-exam",
+      title: "Đề thi mới",
+      subject: "Môn học",
+      grade: "12",
+      timeLimit: 45,
+      questions: [],
+      createdAt: new Date().toISOString(),
+      teacherId: auth.currentUser?.uid || "",
+      status: 'draft'
+    };
+    setExamData(blankExam);
+    setPreviewMode(false);
+    toast.success("Đã tạo đề thi trống. Hãy bắt đầu thêm câu hỏi!");
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="flex flex-col gap-2">
-          <h2 className="text-2xl font-bold text-gray-900">Thiết lập Ma trận đề</h2>
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <input 
-                type="radio" 
-                name="subject" 
-                checked={subject === "general"} 
-                onChange={() => setSubject("general")}
-                className="w-4 h-4 text-blue-600"
-              />
-              <span className={`text-sm ${subject === "general" ? "text-blue-600 font-bold" : "text-gray-500"}`}>Môn học khác</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <input 
-                type="radio" 
-                name="subject" 
-                checked={subject === "physics"} 
-                onChange={() => setSubject("physics")}
-                className="w-4 h-4 text-blue-600"
-              />
-              <span className={`text-sm ${subject === "physics" ? "text-blue-600 font-bold" : "text-gray-500"}`}>Môn Vật Lý</span>
-            </label>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={exportWord}>
-            <FileDown className="w-4 h-4 mr-2" /> Xuất Word
-          </Button>
-          <Button variant="outline" onClick={exportCSV}>
-            <Download className="w-4 h-4 mr-2" /> Xuất CSV
-          </Button>
-          <Button onClick={addRow} className="bg-blue-600 hover:bg-blue-700">
-            <Plus className="w-4 h-4 mr-2" /> Thêm dòng
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      {/* Input Section */}
+      <div className="lg:col-span-4 space-y-6">
         <Card className="border-none shadow-sm overflow-hidden">
-          <CardHeader className="bg-gray-50 border-b">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Calculator className="w-5 h-5 text-blue-600" />
-              Nhập liệu Ma trận
+          <CardHeader className="bg-white border-b">
+            <CardTitle className="text-lg flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <FileUp className="w-5 h-5 text-blue-600" />
+                Chế độ soạn đề
+              </div>
+              <div className="grid grid-cols-3 gap-2 p-1 bg-gray-100 rounded-lg w-full">
+                <button 
+                  onClick={() => setGeneratorMode("matrix")}
+                  className={`py-2 text-[10px] font-medium rounded-md transition-all ${generatorMode === "matrix" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Soạn từ Ma trận
+                </button>
+                <button 
+                  onClick={() => setGeneratorMode("import")}
+                  className={`py-2 text-[10px] font-medium rounded-md transition-all ${generatorMode === "import" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Nhập đề có sẵn
+                </button>
+                <button 
+                  onClick={() => setGeneratorMode("manual")}
+                  className={`py-2 text-[10px] font-medium rounded-md transition-all ${generatorMode === "manual" ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Tạo đề trống
+                </button>
+              </div>
             </CardTitle>
+            <CardDescription>
+              {generatorMode === "matrix" 
+                ? "Tạo đề thi mới dựa trên cấu trúc ma trận và tài liệu nguồn" 
+                : generatorMode === "import"
+                ? "Chuyển đổi file đề thi hiện có (PDF/Word) thành đề thi trực tuyến"
+                : "Tạo một đề thi hoàn toàn mới và tự nhập câu hỏi thủ công"}
+            </CardDescription>
           </CardHeader>
-          <CardContent className="p-0">
-            <ScrollArea className="w-full overflow-auto">
-              <table className="w-full text-sm border-collapse min-w-[1200px]">
-                <thead>
-                  <tr className="bg-gray-100 border-b">
-                    <th rowSpan={3} className="p-2 border-r w-12 text-center">TT</th>
-                    <th rowSpan={3} className="p-2 border-r w-48">Chủ đề/Chương</th>
-                    <th rowSpan={3} className="p-2 border-r w-64">Nội dung/đơn vị kiến thức</th>
-                    <th rowSpan={3} className="p-2 border-r w-64">Yêu cầu cần đạt</th>
-                    {subject === "physics" && <th rowSpan={3} className="p-2 border-r w-48">Năng lực Vật lý</th>}
-                    <th colSpan={16} className="p-2 border-r text-center">Mức độ đánh giá</th>
-                    <th rowSpan={3} className="p-2 w-12 text-center">Xóa</th>
-                  </tr>
-                  <tr className="bg-gray-50 border-b">
-                    <th colSpan={12} className="p-2 border-r text-center">TNKQ</th>
-                    <th colSpan={4} className="p-2 border-r text-center">Tự luận</th>
-                  </tr>
-                  <tr className="bg-gray-50 border-b text-[10px] uppercase tracking-wider">
-                    <th colSpan={4} className="p-1 border-r text-center">Nhiều lựa chọn</th>
-                    <th colSpan={4} className="p-1 border-r text-center">Đúng - Sai</th>
-                    <th colSpan={4} className="p-1 border-r text-center">Trả lời ngắn</th>
-                    <th className="p-1 border-r text-center">Biết</th>
-                    <th className="p-1 border-r text-center">Hiểu</th>
-                    <th className="p-1 border-r text-center">Vận dụng</th>
-                    <th className="p-1 border-r text-center">VD Cao</th>
-                  </tr>
-                  <tr className="bg-white border-b text-[9px] text-gray-400">
-                    <th colSpan={subject === "physics" ? 5 : 4} className="p-0 border-r"></th>
-                    <th className="p-1 border-r text-center">B</th><th className="p-1 border-r text-center">H</th><th className="p-1 border-r text-center">V</th><th className="p-1 border-r text-center">VC</th>
-                    <th className="p-1 border-r text-center">B</th><th className="p-1 border-r text-center">H</th><th className="p-1 border-r text-center">V</th><th className="p-1 border-r text-center">VC</th>
-                    <th className="p-1 border-r text-center">B</th><th className="p-1 border-r text-center">H</th><th className="p-1 border-r text-center">V</th><th className="p-1 border-r text-center">VC</th>
-                    <th className="p-1 border-r text-center">B</th><th className="p-1 border-r text-center">H</th><th className="p-1 border-r text-center">V</th><th className="p-1 border-r text-center">VC</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, idx) => (
-                    <tr key={row.id} className="border-b hover:bg-gray-50 transition-colors">
-                      <td className="p-2 border-r text-center font-medium text-gray-500">{idx + 1}</td>
-                      <td className="p-2 border-r">
-                        <Input 
-                          value={row.chapter} 
-                          onChange={(e) => updateRow(row.id, "chapter", e.target.value)}
-                          className="h-8 text-xs border-none focus-visible:ring-1"
-                          placeholder="Tên chương..."
+          <CardContent className="p-6 space-y-6">
+            {generatorMode === "manual" && (
+              <div className="space-y-4 py-4">
+                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 text-center">
+                  <FileText className="w-8 h-8 text-blue-600 mx-auto mb-2" />
+                  <p className="text-sm text-blue-800 font-medium">Bắt đầu với một đề thi trống</p>
+                  <p className="text-xs text-blue-600 mt-1">Bạn sẽ tự nhập tiêu đề, môn học và thêm từng câu hỏi.</p>
+                </div>
+                <Button 
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white h-12 rounded-xl text-md font-bold"
+                  onClick={handleCreateBlank}
+                >
+                  <Plus className="w-5 h-5 mr-2" /> Tạo đề trống ngay
+                </Button>
+              </div>
+            )}
+
+            {generatorMode !== "manual" && (
+              <>
+                {generatorMode === "matrix" && (
+                  <div className="space-y-4">
+                    <label className="text-sm font-semibold text-gray-700">Cấu trúc Ma trận</label>
+                    <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+                      <button 
+                        onClick={() => setUseManualMatrix(true)}
+                        className={`py-2 text-xs font-medium rounded-md transition-all ${useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Dùng Ma trận đã nhập
+                      </button>
+                      <button 
+                        onClick={() => setUseManualMatrix(false)}
+                        className={`py-2 text-xs font-medium rounded-md transition-all ${!useManualMatrix ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Tải file Ma trận
+                      </button>
+                    </div>
+
+                    {!useManualMatrix && (
+                      <div className="relative group">
+                        <input 
+                          type="file" 
+                          accept=".pdf,.docx,.csv"
+                          onChange={(e) => setMatrixFile(e.target.files?.[0] || null)}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                         />
-                      </td>
-                      <td className="p-2 border-r">
-                        <Input 
-                          value={row.content} 
-                          onChange={(e) => updateRow(row.id, "content", e.target.value)}
-                          className="h-8 text-xs border-none focus-visible:ring-1"
-                          placeholder="Nội dung kiến thức..."
+                        <div className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${matrixFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
+                          <FileUp className={`w-6 h-6 mx-auto mb-1 ${matrixFile ? 'text-blue-600' : 'text-gray-400'}`} />
+                          <p className="text-[10px] font-medium text-gray-600">
+                            {matrixFile ? matrixFile.name : "Chọn file Ma trận"}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-gray-700">
+                    {generatorMode === "matrix" ? "Tải lên file Nội dung (Nguồn câu hỏi)" : "Nội dung đề thi (File hoặc Văn bản)"}
+                  </label>
+                  
+                  {generatorMode === "import" && (
+                    <Tabs value={importMethod} onValueChange={(val: any) => setImportMethod(val)} className="w-full">
+                      <TabsList className="grid w-full grid-cols-2 mb-2">
+                        <TabsTrigger value="file" className="text-xs">Tải file (PDF/Word)</TabsTrigger>
+                        <TabsTrigger value="text" className="text-xs">Dán văn bản</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="file">
+                        <div className="relative group">
+                          <input 
+                            type="file" 
+                            accept=".pdf,.docx,.csv"
+                            onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                          />
+                          <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${sourceFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
+                            <FileUp className={`w-8 h-8 mx-auto mb-2 ${sourceFile ? 'text-blue-600' : 'text-gray-400'}`} />
+                            <p className="text-sm font-medium text-gray-600">
+                              {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file đề"}
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
+                          </div>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="text">
+                        <Textarea 
+                          placeholder="Dán nội dung đề thi của bạn vào đây (bao gồm cả câu hỏi và các phương án)..."
+                          className="min-h-[200px] rounded-xl border-gray-200 focus:ring-blue-500 text-sm font-mono"
+                          value={sourceText}
+                          onChange={(e) => setSourceText(e.target.value)}
                         />
-                      </td>
-                      <td className="p-2 border-r">
-                        <Input 
-                          value={row.requirements} 
-                          onChange={(e) => updateRow(row.id, "requirements", e.target.value)}
-                          className="h-8 text-xs border-none focus-visible:ring-1"
-                          placeholder="Yêu cầu cần đạt..."
-                        />
-                      </td>
-                      {subject === "physics" && (
-                        <td className="p-2 border-r">
-                          <select 
-                            value={row.physicsCompetency} 
-                            onChange={(e) => updateRow(row.id, "physicsCompetency", e.target.value)}
-                            className="w-full h-8 text-[10px] bg-transparent border-none focus:ring-1 focus:ring-blue-500 rounded outline-none"
-                          >
-                            {PHYSICS_COMPETENCIES.map(cp => (
-                              <option key={cp} value={cp}>{cp}</option>
-                            ))}
-                          </select>
-                        </td>
-                      )}
-                      {/* MC */}
-                      <td className="p-1 border-r"><Input type="number" value={row.mc.know} onChange={(e) => updateRow(row.id, "mc.know", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.mc.understand} onChange={(e) => updateRow(row.id, "mc.understand", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.mc.apply} onChange={(e) => updateRow(row.id, "mc.apply", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.mc.highApply} onChange={(e) => updateRow(row.id, "mc.highApply", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      {/* TF */}
-                      <td className="p-1 border-r"><Input type="number" value={row.tf.know} onChange={(e) => updateRow(row.id, "tf.know", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.tf.understand} onChange={(e) => updateRow(row.id, "tf.understand", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.tf.apply} onChange={(e) => updateRow(row.id, "tf.apply", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.tf.highApply} onChange={(e) => updateRow(row.id, "tf.highApply", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      {/* SA */}
-                      <td className="p-1 border-r"><Input type="number" value={row.sa.know} onChange={(e) => updateRow(row.id, "sa.know", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.sa.understand} onChange={(e) => updateRow(row.id, "sa.understand", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.sa.apply} onChange={(e) => updateRow(row.id, "sa.apply", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.sa.highApply} onChange={(e) => updateRow(row.id, "sa.highApply", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      {/* Essay */}
-                      <td className="p-1 border-r"><Input type="number" value={row.essay.know} onChange={(e) => updateRow(row.id, "essay.know", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.essay.understand} onChange={(e) => updateRow(row.id, "essay.understand", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.essay.apply} onChange={(e) => updateRow(row.id, "essay.apply", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      <td className="p-1 border-r"><Input type="number" value={row.essay.highApply} onChange={(e) => updateRow(row.id, "essay.highApply", e.target.value)} className="h-7 w-10 text-center p-0 text-xs border-gray-200" /></td>
-                      
-                      <td className="p-2 text-center">
-                        <Button variant="ghost" size="sm" onClick={() => removeRow(row.id)} className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50">
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-blue-50 font-bold border-t-2 border-blue-200">
-                    <td colSpan={subject === "physics" ? 5 : 4} className="p-3 text-right uppercase text-blue-900">Tổng số câu</td>
-                    <td className="p-1 text-center border-r">{totals.mc.know}</td>
-                    <td className="p-1 text-center border-r">{totals.mc.understand}</td>
-                    <td className="p-1 text-center border-r">{totals.mc.apply}</td>
-                    <td className="p-1 text-center border-r">{totals.mc.highApply}</td>
-                    <td className="p-1 text-center border-r">{totals.tf.know}</td>
-                    <td className="p-1 text-center border-r">{totals.tf.understand}</td>
-                    <td className="p-1 text-center border-r">{totals.tf.apply}</td>
-                    <td className="p-1 text-center border-r">{totals.tf.highApply}</td>
-                    <td className="p-1 text-center border-r">{totals.sa.know}</td>
-                    <td className="p-1 text-center border-r">{totals.sa.understand}</td>
-                    <td className="p-1 text-center border-r">{totals.sa.apply}</td>
-                    <td className="p-1 text-center border-r">{totals.sa.highApply}</td>
-                    <td className="p-1 text-center border-r">{totals.essay.know}</td>
-                    <td className="p-1 text-center border-r">{totals.essay.understand}</td>
-                    <td className="p-1 text-center border-r">{totals.essay.apply}</td>
-                    <td className="p-1 text-center border-r">{totals.essay.highApply}</td>
-                    <td className="bg-white"></td>
-                  </tr>
-                  <tr className="bg-blue-50 font-bold">
-                    <td colSpan={subject === "physics" ? 5 : 4} className="p-3 text-right uppercase text-blue-900">Tỉ lệ % điểm</td>
-                    <td colSpan={4} className="p-1 text-center border-r text-blue-700">
-                      {((totals.mc.know + totals.mc.understand + totals.mc.apply + totals.mc.highApply) / (totals.totalQuestions || 1) * 100).toFixed(0)}%
-                    </td>
-                    <td colSpan={4} className="p-1 text-center border-r text-blue-700">
-                      {((totals.tf.know + totals.tf.understand + totals.tf.apply + totals.tf.highApply) / (totals.totalQuestions || 1) * 100).toFixed(0)}%
-                    </td>
-                    <td colSpan={4} className="p-1 text-center border-r text-blue-700">
-                      {((totals.sa.know + totals.sa.understand + totals.sa.apply + totals.sa.highApply) / (totals.totalQuestions || 1) * 100).toFixed(0)}%
-                    </td>
-                    <td colSpan={4} className="p-1 text-center border-r text-blue-700">
-                      {((totals.essay.know + totals.essay.understand + totals.essay.apply + totals.essay.highApply) / (totals.totalQuestions || 1) * 100).toFixed(0)}%
-                    </td>
-                    <td className="bg-white"></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </ScrollArea>
+                      </TabsContent>
+                    </Tabs>
+                  )}
+
+                  {generatorMode === "matrix" && (
+                    <div className="relative group">
+                      <input 
+                        type="file" 
+                        accept=".pdf,.docx,.csv"
+                        onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      />
+                      <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${sourceFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-400'}`}>
+                        <FileUp className={`w-8 h-8 mx-auto mb-2 ${sourceFile ? 'text-blue-600' : 'text-gray-400'}`} />
+                        <p className="text-sm font-medium text-gray-600">
+                          {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file nguồn"}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-gray-700">Lưu ý thêm từ giáo viên</label>
+                  <Textarea 
+                    placeholder="Ví dụ: Không ra bài tập cân bằng nhiệt, tập trung vào lý thuyết sự chuyển thể..."
+                    className="min-h-[120px] rounded-xl border-gray-200 focus:ring-blue-500"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 border border-red-100 p-4 rounded-xl space-y-3">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                      <p className="text-sm text-red-700">{error}</p>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full border-red-200 text-red-600 hover:bg-red-100 h-8 text-xs"
+                      onClick={handleGenerate}
+                    >
+                      <RefreshCw className="w-3 h-3 mr-2" /> Thử lại ngay
+                    </Button>
+                  </div>
+                )}
+
+                <Button 
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white h-12 rounded-xl text-md font-bold shadow-lg shadow-blue-200"
+                  onClick={handleGenerate}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <>
+                      <RefreshCw className="w-5 h-5 mr-2 animate-spin" />
+                      {generatorMode === "matrix" ? "Đang soạn đề..." : "Đang chuyển đổi..."}
+                    </>
+                  ) : (
+                    <>
+                      {generatorMode === "matrix" ? <Sparkles className="w-5 h-5 mr-2" /> : <CloudUpload className="w-5 h-5 mr-2" />}
+                      {generatorMode === "matrix" ? "Soạn đề theo ma trận" : "Chuyển đổi đề có sẵn"}
+                    </>
+                  )}
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
 
-        <div className="bg-green-50 p-6 rounded-2xl border border-green-100 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="bg-green-600 p-3 rounded-xl">
-              <TableIcon className="w-6 h-6 text-white" />
+        <Card className="border-none shadow-sm bg-blue-50">
+          <CardHeader>
+            <CardTitle className="text-sm font-bold text-blue-900 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              Thông tin ma trận hiện tại
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-blue-700 space-y-1">
+            <p>• Chế độ: {useManualMatrix ? "Dùng ma trận nhập tay" : "Dùng file ma trận tải lên"}</p>
+            {useManualMatrix && (
+              <>
+                <p>• Môn học: {matrixSubject === "physics" ? "Vật Lý" : "Môn khác"}</p>
+                <p>• Số chủ đề: {matrixRows.length}</p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Output Section */}
+      <div className="lg:col-span-8 h-[calc(100vh-220px)] min-h-[600px]">
+        {loading ? (
+          <Card className="border-none shadow-sm h-full min-h-[600px]">
+            <CardContent className="p-12 space-y-6">
+              <Skeleton className="h-8 w-3/4" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <div className="space-y-4 pt-8">
+                <Skeleton className="h-32 w-full" />
+                <Skeleton className="h-32 w-full" />
+              </div>
+            </CardContent>
+          </Card>
+        ) : examData ? (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col h-full"
+          >
+            <div className="bg-white border-b p-4 flex justify-between items-center rounded-t-2xl sticky top-0 z-10">
+              <div className="flex items-center gap-2">
+                <div className="bg-blue-100 p-2 rounded-lg">
+                  <FileText className="w-5 h-5 text-blue-600" />
+                </div>
+                <Input 
+                  value={examData.title} 
+                  onChange={(e) => setExamData({ ...examData, title: e.target.value })}
+                  className="font-bold text-gray-700 border-none focus-visible:ring-0 w-64"
+                />
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <Button variant={previewMode ? "default" : "outline"} size="sm" onClick={() => setPreviewMode(!previewMode)}>
+                  {previewMode ? <Edit2 className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
+                  {previewMode ? "Chế độ sửa" : "Xem trước"}
+                </Button>
+                <Button variant="outline" size="sm" onClick={addQuestion}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Thêm câu
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="border-blue-200 text-blue-600 hover:bg-blue-50"
+                  onClick={() => handlePublish('draft')}
+                  disabled={publishing}
+                >
+                  <Save className="w-4 h-4 mr-2" /> Lưu nháp
+                </Button>
+                <Button 
+                  className="bg-blue-600 hover:bg-blue-700 text-white" 
+                  size="sm"
+                  onClick={() => handlePublish('published')}
+                  disabled={publishing}
+                >
+                  {publishing ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+                  Xuất bản
+                </Button>
+                {examData.id && examData.id !== "new-exam" && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+                    onClick={() => {
+                      const studentUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?code=${examData.id}`;
+                      navigator.clipboard.writeText(studentUrl);
+                      toast.success("Đã sao chép link đề thi cho học sinh!");
+                    }}
+                  >
+                    <Share2 className="w-4 h-4 mr-2" /> Sao chép Link HS
+                  </Button>
+                )}
+              </div>
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-green-900">Kết luận Ma trận</h3>
-              <p className="text-sm text-green-700">Tổng số câu: <span className="font-bold">{totals.totalQuestions}</span> | Tỉ lệ B-H-V-VC: <span className="font-bold">{((totals.overall.know/totals.totalQuestions)*100 || 0).toFixed(0)}% - {((totals.overall.understand/totals.totalQuestions)*100 || 0).toFixed(0)}% - {((totals.overall.apply/totals.totalQuestions)*100 || 0).toFixed(0)}% - {((totals.overall.highApply/totals.totalQuestions)*100 || 0).toFixed(0)}%</span></p>
+            
+            <div className="flex-1 bg-gray-50 p-4 rounded-b-2xl shadow-sm overflow-y-auto custom-scrollbar">
+              <div className="space-y-4 max-w-4xl mx-auto pb-20">
+                {examData.questions.map((q, idx) => {
+                  const prevQ = idx > 0 ? examData.questions[idx - 1] : null;
+                  const showHeader = !prevQ || prevQ.type !== q.type;
+                  
+                  // Calculate range for this part
+                  const questionsOfThisType = examData.questions.filter(quest => quest.type === q.type);
+                  const firstIdx = examData.questions.findIndex(quest => quest.type === q.type) + 1;
+                  const lastIdx = firstIdx + questionsOfThisType.length - 1;
+
+                  let partHeader = null;
+                  if (showHeader) {
+                    if (q.type === "MC") {
+                      partHeader = {
+                        title: "PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn",
+                        desc: `Thí sinh trả lời từ câu ${firstIdx} đến câu ${lastIdx}. Mỗi câu hỏi thí sinh chỉ chọn một phương án.`
+                      };
+                    } else if (q.type === "TF") {
+                      partHeader = {
+                        title: "PHẦN II. Câu trắc nghiệm đúng sai",
+                        desc: `Thí sinh trả lời từ câu ${firstIdx} đến câu ${lastIdx}. Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn đúng hoặc sai.`
+                      };
+                    } else if (q.type === "SA") {
+                      partHeader = {
+                        title: "PHẦN III. Câu trắc nghiệm trả lời ngắn",
+                        desc: `Thí sinh trả lời từ câu ${firstIdx} đến câu ${lastIdx}.`
+                      };
+                    } else if (q.type === "ESSAY") {
+                      partHeader = {
+                        title: "PHẦN IV. Tự luận",
+                        desc: `Thí sinh trả lời từ câu ${firstIdx} đến câu ${lastIdx}.`
+                      };
+                    }
+                  }
+
+                  return (
+                    <React.Fragment key={q.id}>
+                      {partHeader && (
+                        <div className="mt-8 mb-4 p-4 bg-blue-50 rounded-xl border border-blue-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div>
+                            <h3 className="font-bold text-blue-900">{partHeader.title}</h3>
+                            <p className="text-xs text-blue-700 mt-1">{partHeader.desc}</p>
+                          </div>
+                          {!previewMode && (
+                            <div className="flex items-center gap-2 bg-white p-2 rounded-lg border border-blue-200 shadow-sm">
+                              <span className="text-[10px] font-bold text-blue-600 uppercase">Sét điểm:</span>
+                              <Input 
+                                type="number" 
+                                step="0.05"
+                                defaultValue={q.points}
+                                className="w-16 h-8 text-xs font-bold"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    setPointsForPart(q.type, parseFloat((e.target as HTMLInputElement).value));
+                                  }
+                                }}
+                                id={`points-input-${q.type}`}
+                              />
+                              <Button 
+                                size="sm" 
+                                className="h-8 px-2 bg-blue-600 hover:bg-blue-700 text-white text-[10px]"
+                                onClick={() => {
+                                  const input = document.getElementById(`points-input-${q.type}`) as HTMLInputElement;
+                                  if (input) setPointsForPart(q.type, parseFloat(input.value));
+                                }}
+                              >
+                                Áp dụng
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <QuestionItem 
+                        q={q}
+                        idx={idx}
+                        editingId={editingId}
+                        setEditingId={setEditingId}
+                        updateQuestion={updateQuestion}
+                        deleteQuestion={deleteQuestion}
+                        previewMode={previewMode}
+                      />
+                    </React.Fragment>
+                  );
+                })}
+                {examData.questions.length === 0 && (
+                  <div className="h-full min-h-[400px] border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center text-center p-12 bg-white/50">
+                    <div className="bg-gray-100 p-6 rounded-full mb-6">
+                      <Sparkles className="w-12 h-12 text-gray-300" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">Chưa có câu hỏi nào</h3>
+                    <p className="text-gray-500 max-w-md">
+                      Nhấn nút "Thêm câu" hoặc sử dụng AI để tạo câu hỏi cho đề thi của bạn.
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
+          </motion.div>
+        ) : (
+          <div className="h-full min-h-[600px] border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center text-center p-12 bg-white/50">
+            <div className="bg-gray-100 p-6 rounded-full mb-6">
+              <Sparkles className="w-12 h-12 text-gray-300" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Sẵn sàng soạn đề</h3>
+            <p className="text-gray-500 max-w-md">
+              Thiết lập ma trận, tải lên tài liệu nguồn và nhấn nút "Soạn đề" để AI giúp bạn tạo ra một đề kiểm tra hoàn chỉnh.
+            </p>
           </div>
-          <div className="flex items-center gap-2 text-green-600 font-bold">
-            <Check className="w-5 h-5" />
-            ĐẠT CHUẨN ĐÁNH GIÁ
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
 }
-
-function Check({ className }: { className?: string }) {
-  return (
-    <svg 
-      xmlns="http://www.w3.org/2000/svg" 
-      width="24" 
-      height="24" 
-      viewBox="0 0 24 24" 
-      fill="none" 
-      stroke="currentColor" 
-      strokeWidth="3" 
-      strokeLinecap="round" 
-      strokeLinejoin="round" 
-      className={className}
-    >
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-}
-
-// No custom HeadingLevel needed
