@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { saveAs } from "file-saver";
 import { 
   FileText, 
   FileUp, 
@@ -20,7 +21,9 @@ import {
   Eye,
   CloudUpload,
   Image as ImageIcon,
-  ImageOff
+  ImageOff,
+  Share2,
+  Zap
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -59,7 +62,6 @@ import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, AlignmentType } from "docx";
-import { saveAs } from "file-saver";
 import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
 import { db, doc, setDoc, auth, handleFirestoreError, OperationType } from "@/lib/firebase";
 
@@ -232,10 +234,10 @@ const QuestionItem = React.memo(({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="know">Biết</SelectItem>
-                    <SelectItem value="understand">Hiểu</SelectItem>
-                    <SelectItem value="apply">Vận dụng</SelectItem>
-                    <SelectItem value="highApply">Vận dụng cao</SelectItem>
+                    <SelectItem value="know">Biết - Kiến thức có trong bài học</SelectItem>
+                    <SelectItem value="understand">Hiểu - Giải đáp hiện tượng, bài toán đơn giản</SelectItem>
+                    <SelectItem value="apply">Vận dụng - Phối hợp nhiều phần, thực tế, tư duy</SelectItem>
+                    <SelectItem value="highApply">Vận dụng cao - Lồng ghép, bài toán phức tạp</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -572,6 +574,52 @@ export default function ExamGenerator({
     });
   };
 
+  const getFileMimeType = (file: File): string => {
+    if (file.type && file.type.trim() !== "") return file.type;
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.json')) return 'application/json';
+    if (name.endsWith('.csv')) return 'text/csv';
+    if (name.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (name.endsWith('.pdf')) return 'application/pdf';
+    if (name.endsWith('.txt')) return 'text/plain';
+    return 'text/plain';
+  };
+
+  const handleExportJson = () => {
+    if (!examData) return;
+    const jsonString = JSON.stringify(examData, null, 2);
+    const blob = new Blob([jsonString], { type: "application/json;charset=utf-8;" });
+    const fileName = `${examData.title || "DeThi"}.json`;
+    saveAs(blob, fileName);
+    toast.success(`Đã xuất file JSON đề thi (${fileName}) thành công!`);
+  };
+
+  const handleDirectJsonImport = async (file: File) => {
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data && Array.isArray(data.questions)) {
+        const formattedExam: Exam = {
+          id: data.id || "exam-" + Math.random().toString(36).substr(2, 9),
+          title: data.title || file.name.replace(/\.json$/i, ""),
+          subject: data.subject || "Vật Lý",
+          grade: data.grade || "12",
+          timeLimit: data.timeLimit || 45,
+          questions: data.questions,
+          createdAt: data.createdAt || new Date().toISOString(),
+          teacherId: "guest"
+        };
+        setExamData(formattedExam);
+        setPreviewMode(false);
+        toast.success("Đã nạp đề thi trực tiếp từ file JSON thành công!");
+      } else {
+        toast.info("File JSON không chứa cấu trúc 'questions' đề thi tiêu chuẩn. Bạn có thể nhấn 'Chuyển đổi đề bằng AI' để xử lý.");
+      }
+    } catch (e: any) {
+      toast.error("Không thể đọc file JSON. Vui lòng kiểm tra lại định dạng file.");
+    }
+  };
+
   const handleGenerate = async () => {
     if (!apiKey) {
       setError("Vui lòng nhập Gemini API Key ở phía trên.");
@@ -598,7 +646,8 @@ export default function ExamGenerator({
       // Only prepare file data if we are in matrix mode or import-file mode
       if ((generatorMode === "matrix" || (generatorMode === "import" && importMethod === "file")) && sourceFile) {
         const base64 = await fileToBase64(sourceFile);
-        sourceFileData = { data: base64, mimeType: sourceFile.type };
+        const mimeType = getFileMimeType(sourceFile);
+        sourceFileData = { data: base64, mimeType };
       }
 
       // Only use text if we are in import-text mode
@@ -613,7 +662,8 @@ export default function ExamGenerator({
           let matrixFileData = undefined;
           if (matrixFile && !useManualMatrix) {
             const base64 = await fileToBase64(matrixFile);
-            matrixFileData = { data: base64, mimeType: matrixFile.type };
+            const mimeType = getFileMimeType(matrixFile);
+            matrixFileData = { data: base64, mimeType };
           }
           result = await generateExamPaper(apiKey, matrixString, notes, sourceFileData, matrixFileData);
         } else {
@@ -827,9 +877,17 @@ export default function ExamGenerator({
       await setDoc(doc(db, "exams", examId), finalExam);
       
       if (status === 'published') {
+        const studentUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?code=${examId}`;
         toast.success("Đã xuất bản đề thi thành công!", {
-          description: `Mã đề của bạn là: ${examId}. Hãy gửi mã này cho học sinh.`,
-          duration: 10000,
+          description: `Mã đề của bạn là: ${examId}. Hãy gửi mã hoặc gửi link trực tiếp này.`,
+          action: {
+            label: "Sao chép Link HS",
+            onClick: () => {
+              navigator.clipboard.writeText(studentUrl);
+              toast.success("Đã sao chép link đề thi cho học sinh!");
+            }
+          },
+          duration: 12000,
         });
       } else {
         toast.success("Đã lưu bản nháp thành công!");
@@ -946,7 +1004,7 @@ export default function ExamGenerator({
                       <div className="relative group">
                         <input 
                           type="file" 
-                          accept=".pdf,.docx,.csv"
+                          accept=".pdf,.docx,.csv,.json,.txt"
                           onChange={(e) => setMatrixFile(e.target.files?.[0] || null)}
                           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                         />
@@ -955,6 +1013,7 @@ export default function ExamGenerator({
                           <p className="text-[10px] font-medium text-gray-600">
                             {matrixFile ? matrixFile.name : "Chọn file Ma trận"}
                           </p>
+                          <p className="text-[9px] text-gray-400 mt-0.5">Hỗ trợ PDF, DOCX, CSV, JSON, TXT</p>
                         </div>
                       </div>
                     )}
@@ -969,14 +1028,14 @@ export default function ExamGenerator({
                   {generatorMode === "import" && (
                     <Tabs value={importMethod} onValueChange={(val: any) => setImportMethod(val)} className="w-full">
                       <TabsList className="grid w-full grid-cols-2 mb-2">
-                        <TabsTrigger value="file" className="text-xs">Tải file (PDF/Word)</TabsTrigger>
+                        <TabsTrigger value="file" className="text-xs">Tải file (PDF/Word/JSON)</TabsTrigger>
                         <TabsTrigger value="text" className="text-xs">Dán văn bản</TabsTrigger>
                       </TabsList>
                       <TabsContent value="file">
                         <div className="relative group">
                           <input 
                             type="file" 
-                            accept=".pdf,.docx,.csv"
+                            accept=".pdf,.docx,.csv,.json,.txt"
                             onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
                             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                           />
@@ -985,7 +1044,25 @@ export default function ExamGenerator({
                             <p className="text-sm font-medium text-gray-600">
                               {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file đề"}
                             </p>
-                            <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
+                            <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV, JSON, TXT</p>
+                            {sourceFile && sourceFile.name.toLowerCase().endsWith('.json') && (
+                              <div className="mt-3 pt-3 border-t border-blue-200/80 flex flex-col items-center gap-1.5">
+                                <p className="text-xs text-blue-700 font-medium">Phát hiện file JSON đề thi!</p>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs shadow-sm z-20 relative pointer-events-auto"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDirectJsonImport(sourceFile);
+                                  }}
+                                >
+                                  <Zap className="w-3.5 h-3.5 mr-1.5 text-yellow-300 fill-yellow-300" />
+                                  Nạp nhanh trực tiếp từ JSON (Không tốn lượt AI)
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </TabsContent>
@@ -1004,7 +1081,7 @@ export default function ExamGenerator({
                     <div className="relative group">
                       <input 
                         type="file" 
-                        accept=".pdf,.docx,.csv"
+                        accept=".pdf,.docx,.csv,.json,.txt"
                         onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                       />
@@ -1013,7 +1090,25 @@ export default function ExamGenerator({
                         <p className="text-sm font-medium text-gray-600">
                           {sourceFile ? sourceFile.name : "Kéo thả hoặc chọn file nguồn"}
                         </p>
-                        <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV</p>
+                        <p className="text-xs text-gray-400 mt-1">Hỗ trợ PDF, DOCX, CSV, JSON, TXT</p>
+                        {sourceFile && sourceFile.name.toLowerCase().endsWith('.json') && (
+                          <div className="mt-3 pt-3 border-t border-blue-200/80 flex flex-col items-center gap-1.5">
+                            <p className="text-xs text-blue-700 font-medium">Phát hiện file JSON đề thi!</p>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="bg-blue-600 hover:bg-blue-700 text-white text-xs shadow-sm z-20 relative pointer-events-auto"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDirectJsonImport(sourceFile);
+                              }}
+                            >
+                              <Zap className="w-3.5 h-3.5 mr-1.5 text-yellow-300 fill-yellow-300" />
+                              Nạp nhanh trực tiếp từ JSON (Không tốn lượt AI)
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1068,21 +1163,29 @@ export default function ExamGenerator({
           </CardContent>
         </Card>
 
-        <Card className="border-none shadow-sm bg-blue-50">
-          <CardHeader>
+        <Card className="border-none shadow-sm bg-blue-50/80">
+          <CardHeader className="pb-2">
             <CardTitle className="text-sm font-bold text-blue-900 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" />
-              Thông tin ma trận hiện tại
+              <AlertCircle className="w-4 h-4 text-blue-600" />
+              Cấu hình Ma trận & Tiêu chí Mức độ AI
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-blue-700 space-y-1">
-            <p>• Chế độ: {useManualMatrix ? "Dùng ma trận nhập tay" : "Dùng file ma trận tải lên"}</p>
+          <CardContent className="text-xs text-blue-800 space-y-2">
+            <p>• <span className="font-medium">Chế độ:</span> {useManualMatrix ? "Dùng ma trận nhập tay" : "Dùng file ma trận tải lên"}</p>
             {useManualMatrix && (
               <>
-                <p>• Môn học: {matrixSubject === "physics" ? "Vật Lý" : "Môn khác"}</p>
-                <p>• Số chủ đề: {matrixRows.length}</p>
+                <p>• <span className="font-medium">Môn học:</span> {matrixSubject === "physics" ? "Vật Lý" : "Môn khác"}</p>
+                <p>• <span className="font-medium">Số chủ đề:</span> {matrixRows.length}</p>
               </>
             )}
+
+            <div className="pt-2 border-t border-blue-200/70 space-y-1.5 text-[11px] leading-relaxed">
+              <p className="font-bold text-blue-900">Mô tả mức độ câu hỏi soạn bởi AI:</p>
+              <p><span className="font-semibold text-blue-900">• Biết:</span> Kiểm tra các kiến thức có trong bài học.</p>
+              <p><span className="font-semibold text-blue-900">• Hiểu:</span> Dùng kiến thức biết, giải đáp hiện tượng vật lý, bài toán liên quan đơn giản.</p>
+              <p><span className="font-semibold text-blue-900">• Vận dụng:</span> Dùng kiến thức thuộc nhiều phần, phối hợp giải quyết bài toán thực tế, rèn tư duy & phân tích.</p>
+              <p><span className="font-semibold text-blue-900">• Vận dụng cao:</span> Các kiến thức lồng ghép, giải quyết bài toán phức tạp (độ khó cao, phân hóa sâu).</p>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -1119,7 +1222,7 @@ export default function ExamGenerator({
                   className="font-bold text-gray-700 border-none focus-visible:ring-0 w-64"
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <Button variant={previewMode ? "default" : "outline"} size="sm" onClick={() => setPreviewMode(!previewMode)}>
                   {previewMode ? <Edit2 className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
                   {previewMode ? "Chế độ sửa" : "Xem trước"}
@@ -1127,6 +1230,22 @@ export default function ExamGenerator({
                 <Button variant="outline" size="sm" onClick={addQuestion}>
                   <Plus className="w-4 h-4 mr-2" />
                   Thêm câu
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="border-blue-200 text-blue-700 hover:bg-blue-50"
+                  onClick={handleExportDocx}
+                >
+                  <FileDown className="w-4 h-4 mr-1.5" /> Xuất Word (.docx)
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="border-purple-200 text-purple-700 hover:bg-purple-50"
+                  onClick={handleExportJson}
+                >
+                  <FileDown className="w-4 h-4 mr-1.5" /> Xuất JSON
                 </Button>
                 <Button 
                   variant="outline" 
@@ -1146,6 +1265,20 @@ export default function ExamGenerator({
                   {publishing ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
                   Xuất bản
                 </Button>
+                {examData.id && examData.id !== "new-exam" && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+                    onClick={() => {
+                      const studentUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?code=${examData.id}`;
+                      navigator.clipboard.writeText(studentUrl);
+                      toast.success("Đã sao chép link đề thi cho học sinh!");
+                    }}
+                  >
+                    <Share2 className="w-4 h-4 mr-2" /> Sao chép Link HS
+                  </Button>
+                )}
               </div>
             </div>
             
