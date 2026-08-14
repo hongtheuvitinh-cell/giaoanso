@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/dialog";
 import { MatrixRow, Question, QuestionType, QuestionLevel, Exam } from "@/types";
 import { generateExamPaper, parseExistingExam } from "@/lib/gemini";
+import { parseAnyExamJson } from "@/lib/json-exam-parser";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -597,25 +598,16 @@ export default function ExamGenerator({
   const handleDirectJsonImport = async (file: File) => {
     try {
       const text = await file.text();
-      const data = JSON.parse(text);
-      if (data && Array.isArray(data.questions)) {
-        const formattedExam: Exam = {
-          id: data.id || "exam-" + Math.random().toString(36).substr(2, 9),
-          title: data.title || file.name.replace(/\.json$/i, ""),
-          subject: data.subject || "Vật Lý",
-          grade: data.grade || "12",
-          timeLimit: data.timeLimit || 45,
-          questions: data.questions,
-          createdAt: data.createdAt || new Date().toISOString(),
-          teacherId: "guest"
-        };
-        setExamData(formattedExam);
+      const parsedExam = parseAnyExamJson(text, file.name);
+      if (parsedExam && Array.isArray(parsedExam.questions) && parsedExam.questions.length > 0) {
+        setExamData(parsedExam);
         setPreviewMode(false);
-        toast.success("Đã nạp đề thi trực tiếp từ file JSON thành công!");
+        toast.success(`Đã nạp thành công ${parsedExam.questions.length} câu hỏi từ file JSON (${parsedExam.title})!`);
       } else {
-        toast.info("File JSON không chứa cấu trúc 'questions' đề thi tiêu chuẩn. Bạn có thể nhấn 'Chuyển đổi đề bằng AI' để xử lý.");
+        toast.info("Không thể tự động phân tích cấu trúc đề thi từ file JSON này. Bạn có thể nhấn 'Chuyển đổi đề bằng AI' để xử lý.");
       }
     } catch (e: any) {
+      console.error("Lỗi đọc file JSON:", e);
       toast.error("Không thể đọc file JSON. Vui lòng kiểm tra lại định dạng file.");
     }
   };
@@ -634,6 +626,37 @@ export default function ExamGenerator({
     if (generatorMode === "import" && !sourceFile && !sourceText) {
       setError("Vui lòng tải lên file đề thi hoặc nhập văn bản đề thi để chuyển đổi.");
       return;
+    }
+
+    // Direct JSON parsing optimization (Fast-path without consuming AI quota)
+    if (generatorMode === "import") {
+      if (importMethod === "text" && sourceText.trim()) {
+        const trimmed = sourceText.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+          const directExam = parseAnyExamJson(trimmed);
+          if (directExam && directExam.questions && directExam.questions.length > 0) {
+            setExamData(directExam);
+            setPreviewMode(false);
+            setError(null);
+            toast.success(`Đã chuyển đổi trực tiếp ${directExam.questions.length} câu hỏi từ định dạng JSON!`);
+            return;
+          }
+        }
+      } else if (importMethod === "file" && sourceFile && sourceFile.name.toLowerCase().endsWith(".json")) {
+        try {
+          const text = await sourceFile.text();
+          const directExam = parseAnyExamJson(text, sourceFile.name);
+          if (directExam && directExam.questions && directExam.questions.length > 0) {
+            setExamData(directExam);
+            setPreviewMode(false);
+            setError(null);
+            toast.success(`Đã nạp trực tiếp ${directExam.questions.length} câu hỏi từ file JSON (${directExam.title})!`);
+            return;
+          }
+        } catch (err) {
+          console.warn("Direct JSON import failed, falling back to AI:", err);
+        }
+      }
     }
 
     setLoading(true);
@@ -686,34 +709,15 @@ export default function ExamGenerator({
         return;
       }
 
-      // Clean result if it has markdown blocks or extra text
-      let cleanResult = result.trim();
-      
-      // Remove potential markdown code blocks (e.g., ```json ... ```)
-      cleanResult = cleanResult.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim();
-
-      // Find the first '{' and the last '}' to isolate the JSON object if there's surrounding text
-      const firstBrace = cleanResult.indexOf('{');
-      const lastBrace = cleanResult.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace !== -1) {
-        cleanResult = cleanResult.substring(firstBrace, lastBrace + 1);
-      }
-
-      // Pre-parse cleaning for common AI mistakes like trailing commas
-      // Note: This is defensive, AI models sometimes produce invalid JSON fragments
-      try {
-        // Simple regex-based cleanup for trailing commas in arrays/objects
-        cleanResult = cleanResult
-          .replace(/,\s*([\]\}])/g, '$1') 
-          .replace(/(\r\n|\n|\r)/gm, " "); // Flatten newlines within JSON strings if any
-
-        const parsedExam: Exam = JSON.parse(cleanResult);
+      // Parse result using robust universal parser
+      const parsedExam = parseAnyExamJson(result);
+      if (parsedExam && Array.isArray(parsedExam.questions) && parsedExam.questions.length > 0) {
         setExamData(parsedExam);
         setPreviewMode(false);
-        toast.success("Đã bóc tách đề thi thành công!");
-      } catch (parseErr) {
-        console.error("Parse Error:", parseErr, "Cleaned Result was:", cleanResult);
-        setError("Dữ liệu AI trả về không đúng định dạng. Vui lòng thử lại hoặc điều chỉnh yêu cầu tài liệu.");
+        toast.success(`Đã bóc tách đề thi thành công (${parsedExam.questions.length} câu hỏi)!`);
+      } else {
+        console.error("Failed to parse AI response into Exam object:", result);
+        setError("Dữ liệu AI trả về không đúng định dạng. Vui lòng thử lại hoặc kiểm tra lại file nguồn.");
       }
     } catch (err: any) {
       console.error(err);
