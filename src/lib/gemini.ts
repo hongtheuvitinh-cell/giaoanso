@@ -144,9 +144,15 @@ Hãy đóng vai một chuyên gia khảo thí. Nhiệm vụ của bạn là so�
 THÔNG TIN MA TRẬN ĐỀ (JSON):
 ${matrixFile ? "Cấu trúc ma trận được cung cấp trong FILE ĐÍNH KÈM." : matrixData}
 
-YÊU CẦU QUAN TRỌNG VỀ ĐỌC MA TRẬN:
+YÊU CẦU QUAN TRỌNG VỀ ĐỌC MA TRẬN VÀ MỨC ĐỘ NHẬN THỨC:
 1. Bạn phải soạn đề bám sát HOÀN TOÀN vào ma trận dữ liệu JSON ở trên. 
-2. Cách tính số lượng câu hỏi:
+2. QUY ĐỊNH TIÊU CHÍ TIÊU CHUẨN CHO CÁC MỨC ĐỘ NHẬN THỨC (BẮT BUỘC TUÂN THỦ TÍNH PHÂN HÓA):
+   - Mức Biết (level: "know"): Các câu mức độ biết, kiểm tra các kiến thức có trong bài học.
+   - Mức Hiểu (level: "understand"): Dùng các kiến thức biết, giải đáp các vấn đề liên quan đến hiện tượng vật lý, biết dùng các kiến thức vào việc giải quyết bài toán liên quan ở mức độ đơn giản.
+   - Mức Vận dụng (level: "apply"): Dùng các kiến thức thuộc nhiều phần, phối hợp với nhau để giải quyết bài toán thực tế, bài toán rèn tư duy, rèn khả năng phân tích.
+   - Mức Vận dụng cao (level: "highApply"): Các kiến thức lồng ghép, giải quyết bài toán phức tạp.
+     * YÊU CẦU ĐẶC BIỆT DÀNH CHO VẬN DỤNG CAO: Các câu VDC phải mang tính phân hóa giỏi/xuất sắc cao. AI PHẢI lồng ghép kiến thức phức tạp giữa nhiều bài học/chuyên đề, xây dựng bài toán rèn tư duy sâu (kèm biến đổi toán học/suy luận vật lý nâng cao hoặc phân tích đồ thị/thí nghiệm chuyên sâu). Tuyệt đối không ra các câu VDC đơn giản hay chỉ tính toán 1-2 bước.
+3. Cách tính số lượng câu hỏi:
    - mc (Trắc nghiệm Lựa chọn): Mỗi đơn vị là 1 câu hỏi (Phần I).
    - tf (Trắc nghiệm Đúng - Sai): Mỗi đơn vị là 1 Ý (mệnh đề). CỨ 4 Ý SẼ GỘP THÀNH 1 CÂU HỎI LỚN (Phần II). Các ý trong cùng một câu hỏi lớn có thể có cấp độ (B, H, V, VC) khác nhau tùy theo ma trận.
      - Ví dụ: Nếu ma trận yêu cầu 2 ý B, 1 ý H, 1 ý V cho TF -> AI tạo 1 câu hỏi TF có 4 ý a,b,c,d (với a,b mức Biết; c mức Hiểu; d mức Vận dụng).
@@ -247,14 +253,23 @@ export const parseExistingExam = async (
 ) => {
   const ai = new GoogleGenAI({ apiKey });
   const prompt = `
-Hãy đóng vai một chuyên gia số hóa học liệu. Nhiệm vụ của bạn là chuyển đổi TOÀN BỘ đề thi (từ file/văn bản) thành định dạng JSON chuẩn.
+Hãy đóng vai một chuyên gia số hóa học liệu. Nhiệm vụ của bạn là chuyển đổi TOÀN BỘ đề thi (từ file/văn bản/JSON) thành định dạng JSON chuẩn.
 
 ${sourceText ? `VĂN BẢN ĐỀ THI CẦN CHUYỂN ĐỔI:\n${sourceText}\n` : ""}
 
 YÊU CẦU QUAN TRỌNG:
 1. TRÍCH XUẤT ĐỦ số lượng thực tế có trong tài liệu. Không tự ý thêm bớt.
-2. LATEX TUYỆT ĐỐI cho công thức: Dùng $...$. Ví dụ: $\rho$, $3 \cdot 10^8$, $\frac{p_2 T_1}{p_1 T_2}$. Mọi biến số x, y, n, m đều phải nằm trong $.
-3. JSON PHẢI CHUẨN: Không có văn bản thừa, không markdown blocks. Trả về JSON theo cấu trúc dưới đây.
+2. NHẬN DIỆN CHUẨN CẤU TRÚC ĐỀ THI THPT MỚI (Từ năm 2025/2026):
+   - PHẦN I: Trắc nghiệm 4 lựa chọn -> type: "MC", options gồm 4 phần tử id "A", "B", "C", "D".
+   - PHẦN II: Trắc nghiệm Đúng/Sai -> type: "TF", options gồm 4 phần tử id "a", "b", "c", "d" với isCorrect: true/false.
+   - PHẦN III: Trắc nghiệm Trả lời ngắn -> type: "SA", có correctAnswer và explanation rõ ràng.
+3. PHÂN LOẠI MỨC ĐỘ CÂU HỎI (level) ĐÚNG THEO TIÊU CHÍ:
+   - know (Biết): Kiểm tra kiến thức có sẵn trong bài học.
+   - understand (Hiểu): Giải đáp hiện tượng, bài toán đơn giản.
+   - apply (Vận dụng): Phối hợp kiến thức nhiều phần, bài toán thực tế/rèn tư duy.
+   - highApply (Vận dụng cao): Các kiến thức lồng ghép, giải quyết bài toán phức tạp.
+4. LATEX TUYỆT ĐỐI cho công thức: Dùng $...$. Ví dụ: $\rho$, $3 \cdot 10^8$, $\\frac{p_2 T_1}{p_1 T_2}$. Mọi biến số x, y, n, m đều phải nằm trong $.
+5. JSON PHẢI CHUẨN: Không có văn bản thừa, không markdown blocks. Trả về JSON theo cấu trúc dưới đây.
 
 CẤU TRÚC JSON:
 {
