@@ -89,21 +89,43 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
       if (user) {
-        // Fetch or create user profile
-        const userDocRef = doc(db, "users", user.uid);
-        const userSnap = await getDoc(userDocRef);
-        if (userSnap.exists()) {
-          setUserProfile(userSnap.data());
-        } else {
-          const newProfile = {
+        try {
+          // Fetch or create user profile
+          const userDocRef = doc(db, "users", user.uid);
+          const userSnap = await getDoc(userDocRef);
+          const isAdminUser = user.email === "trieuhaminh@gmail.com";
+          
+          if (userSnap.exists()) {
+            const data = userSnap.data();
+            // Automatically upgrade pending users to teachers and admin user to admin
+            if ((isAdminUser && data.role !== "admin") || (!isAdminUser && data.role === "pending")) {
+              const updatedRole = isAdminUser ? "admin" : "teacher";
+              await setDoc(userDocRef, { ...data, role: updatedRole }, { merge: true });
+              setUserProfile({ ...data, role: updatedRole });
+            } else {
+              setUserProfile(data);
+            }
+          } else {
+            const newProfile = {
+              uid: user.uid,
+              email: user.email || "",
+              displayName: user.displayName || user.email?.split("@")[0] || "Giáo viên",
+              role: isAdminUser ? "admin" : "teacher",
+              createdAt: new Date().toISOString()
+            };
+            await setDoc(userDocRef, newProfile);
+            setUserProfile(newProfile);
+          }
+        } catch (authDocErr) {
+          console.error("Error setting up user profile in Firestore:", authDocErr);
+          // Set fallback profile in state so UI remains fully functional
+          setUserProfile({
             uid: user.uid,
-            email: user.email,
-            displayName: user.displayName,
-            role: user.email === "trieuhaminh@gmail.com" ? "admin" : "pending",
+            email: user.email || "",
+            displayName: user.displayName || user.email?.split("@")[0] || "Giáo viên",
+            role: user.email === "trieuhaminh@gmail.com" ? "admin" : "teacher",
             createdAt: new Date().toISOString()
-          };
-          await setDoc(userDocRef, newProfile);
-          setUserProfile(newProfile);
+          });
         }
       } else {
         setUserProfile(null);
