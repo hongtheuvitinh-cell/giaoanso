@@ -2,78 +2,37 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: stats
-    // Document ID: global
-    // Fields:
-    //   - visitCount: number (required) - Total number of visits
-    //
-    // ===============================================================
-
     // Helper Functions
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    function isAdmin() {
-      return isAuthenticated() && 
-             (request.auth.token.email == "trieuhaminh@gmail.com" ||
-              (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
-    }
-
-    function isTeacher() {
-      return isAuthenticated();
-    }
-
     match /users/{uid} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.auth.uid == uid;
-      allow update: if isAuthenticated() && (request.auth.uid == uid || isAdmin());
-      allow delete: if isAdmin();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAuthenticated();
     }
 
     match /stats/global {
-      // Allow anyone to read the visit count
-      allow read: if true;
-      
-      // Allow incrementing the visit count
-      allow update: if true;
-      
-      // Allow initial creation if it doesn't exist
-      allow create: if true;
+      allow read, write: if true;
     }
 
     match /exams/{examId} {
-      // Anyone can read a published exam (students need to fetch it by ID)
+      // Anyone (including students) can read exams
       allow read: if true;
       
-      // Any authenticated user can create/save their exams
-      allow create: if isAuthenticated() && 
-                      (request.resource.data.teacherId == request.auth.uid || request.resource.data.teacherId == "guest");
-      
-      // Owner or Admin can update their exams
-      allow update: if isAuthenticated() && 
-                      (resource.data.teacherId == request.auth.uid || resource.data.teacherId == "guest" || isAdmin());
-      
-      // Owner or Admin can delete their exams
-      allow delete: if isAuthenticated() && 
-                      (resource.data.teacherId == request.auth.uid || resource.data.teacherId == "guest" || isAdmin());
+      // Any authenticated user (teachers, admins) can create, update, and delete exams
+      allow create, update, delete: if isAuthenticated();
     }
 
     match /results/{resultId} {
-      // Students can create results (submit their answers)
+      // Students can submit exam results without logging in
       allow create: if request.resource.data.studentName is string &&
                    request.resource.data.examId is string;
       
-      // Allow authenticated teachers to read all exam results
-      allow read: if isAuthenticated();
-
-      // Allow deletion by authenticated teachers/admins
-      allow delete: if isAuthenticated();
+      // Authenticated teachers/admins can read and delete results
+      allow read, delete: if isAuthenticated();
+      allow update: if isAuthenticated();
     }
   }
 }
