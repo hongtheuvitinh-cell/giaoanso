@@ -863,13 +863,16 @@ export default function ExamGenerator({
     
     if (!auth.currentUser) {
       toast.error(`Vui lòng đăng nhập để ${status === 'published' ? 'xuất bản' : 'lưu'} đề thi.`, {
-        description: "Nhấn nút 'Đăng nhập GV' ở góc trên bên phải."
+        description: "Nhấn nút 'Đăng nhập GV' ở góc trên bên phải thanh menu."
       });
       return;
     }
 
     setPublishing(true);
-    const examId = examData.id && examData.id !== "new-exam" ? examData.id : `exam_${Date.now()}`;
+    // Sanitize document ID to avoid invalid characters or sub-collection paths
+    const rawId = examData.id && examData.id !== "new-exam" ? examData.id : `exam_${Date.now()}`;
+    const examId = String(rawId).replace(/[^a-zA-Z0-9_-]/g, "_");
+
     try {
       const finalExam: Exam = {
         ...examData,
@@ -878,12 +881,15 @@ export default function ExamGenerator({
         teacherId: auth.currentUser.uid,
         status: status
       };
-      await setDoc(doc(db, "exams", examId), finalExam);
+
+      // Strip any undefined fields before sending to Firestore
+      const sanitizedExam = JSON.parse(JSON.stringify(finalExam));
+      await setDoc(doc(db, "exams", examId), sanitizedExam);
       
       if (status === 'published') {
         const studentUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?code=${examId}`;
         toast.success("Đã xuất bản đề thi thành công!", {
-          description: `Mã đề của bạn là: ${examId}. Hãy gửi mã hoặc gửi link trực tiếp này.`,
+          description: `Mã đề của bạn là: ${examId}. Hãy gửi mã hoặc gửi link trực tiếp này cho học sinh.`,
           action: {
             label: "Sao chép Link HS",
             onClick: () => {
@@ -894,17 +900,18 @@ export default function ExamGenerator({
           duration: 12000,
         });
       } else {
-        toast.success("Đã lưu bản nháp thành công!");
+        toast.success("Đã lưu bản nháp đề thi thành công!");
       }
       
       setExamData(finalExam);
-    } catch (err) {
+    } catch (err: any) {
+      console.error("Firestore Publish/Save Error:", err);
       try {
         handleFirestoreError(err, OperationType.WRITE, `exams/${examId}`);
       } catch (wrappedErr) {
-        console.error(wrappedErr);
-        toast.error(`Lỗi khi ${status === 'published' ? 'xuất bản' : 'lưu'} đề thi. Vui lòng kiểm tra quyền truy cập.`);
+        console.error("Wrapped Firestore Error:", wrappedErr);
       }
+      toast.error(`Lỗi khi ${status === 'published' ? 'xuất bản' : 'lưu'} đề thi: ${err?.message || "Vui lòng thử lại"}`);
     } finally {
       setPublishing(false);
     }
