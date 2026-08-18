@@ -176,7 +176,8 @@ export default function StudentExam() {
         answers
       };
 
-      await addDoc(collection(db, "results"), resultData);
+      const sanitizedResult = JSON.parse(JSON.stringify(resultData));
+      await addDoc(collection(db, "results"), sanitizedResult);
       setResult(resultData);
       toast.success("Đã nộp bài thành công!");
     } catch (err) {
