@@ -18,8 +18,7 @@ export function parseAnyExamJson(rawData: any, defaultFileName?: string): Exam |
       return null;
     }
   }
-
-  if (typeof data !== "object" || data === null) {
+if (typeof data !== "object" || data === null) {
     return null;
   }
 
