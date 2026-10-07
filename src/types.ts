@@ -24,6 +24,7 @@ export interface Question {
   type: QuestionType;
   level: QuestionLevel;
   content: string;
+  context?: string; // Lời dẫn / Ngữ liệu chung
   imageUrl?: string;
   options?: QuestionOption[]; // For MC and TF
   correctAnswer?: string; // For SA
@@ -41,6 +42,22 @@ export interface Exam {
   createdAt: string;
   teacherId: string;
   status?: 'draft' | 'published';
+}
+
+export interface ExamResult {
+  id: string;
+  studentName: string;
+  studentClass?: string;
+  schoolName?: string;
+  displayNameCombined?: string; // Tên hs _ tên lớp _ tên trường
+  examId: string;
+  examTitle: string;
+  teacherId?: string;
+  score: number;
+  totalQuestions: number;
+  correctAnswers: number;
+  submittedAt: string;
+  answers: Record<string, any>;
 }
 
 export const PHYSICS_COMPETENCIES = [

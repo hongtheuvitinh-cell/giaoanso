@@ -34,7 +34,12 @@
       "type": "object",
       "properties": {
         "studentName": { "type": "string" },
+        "studentClass": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "displayNameCombined": { "type": "string" },
         "examId": { "type": "string" },
+        "examTitle": { "type": "string" },
+        "teacherId": { "type": "string" },
         "score": { "type": "number" },
         "totalQuestions": { "type": "number" },
         "correctAnswers": { "type": "number" },

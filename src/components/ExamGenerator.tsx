@@ -23,7 +23,8 @@ import {
   Image as ImageIcon,
   ImageOff,
   Share2,
-  Zap
+  Zap,
+  BookOpen
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -75,7 +76,8 @@ const QuestionItem = React.memo(({
   setEditingId, 
   updateQuestion, 
   deleteQuestion,
-  previewMode 
+  previewMode,
+  showContextInsideCard = false
 }: { 
   q: Question, 
   idx: number, 
@@ -83,10 +85,13 @@ const QuestionItem = React.memo(({
   setEditingId: (id: string | null) => void,
   updateQuestion: (id: string, updates: Partial<Question>) => void,
   deleteQuestion: (id: string) => void,
-  previewMode: boolean
+  previewMode: boolean,
+  showContextInsideCard?: boolean
 }) => {
   const [localContent, setLocalContent] = useState(q.content);
   const [debouncedContent, setDebouncedContent] = useState(q.content);
+  const [localContext, setLocalContext] = useState(q.context || "");
+  const [debouncedContext, setDebouncedContext] = useState(q.context || "");
   const [localExplanation, setLocalExplanation] = useState(q.explanation || "");
   const [debouncedExplanation, setDebouncedExplanation] = useState(q.explanation || "");
   const [showImageUrlDialog, setShowImageUrlDialog] = useState(false);
@@ -97,9 +102,11 @@ const QuestionItem = React.memo(({
   useEffect(() => {
     setLocalContent(q.content);
     setDebouncedContent(q.content);
+    setLocalContext(q.context || "");
+    setDebouncedContext(q.context || "");
     setLocalExplanation(q.explanation || "");
     setDebouncedExplanation(q.explanation || "");
-  }, [q.id]);
+  }, [q.id, q.content, q.context, q.explanation]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -110,6 +117,16 @@ const QuestionItem = React.memo(({
     }, 500);
     return () => clearTimeout(timer);
   }, [localContent]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedContext(localContext);
+      if (localContext !== (q.context || "")) {
+        updateQuestion(q.id, { context: localContext || undefined });
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [localContext]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -141,15 +158,28 @@ const QuestionItem = React.memo(({
 
   if (previewMode) {
     return (
-      <Card className="border-none shadow-sm">
+      <Card className="border-none shadow-sm bg-white">
         <CardContent className="p-6">
-          <div className="flex justify-between items-start mb-4">
-            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-100">
+          <div className="flex justify-between items-start mb-3">
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold px-3 py-1">
               Câu {idx + 1}
             </Badge>
           </div>
           <div className="space-y-4">
-            <div className="prose prose-sm max-w-none">
+            {showContextInsideCard && q.context && (
+              <div className="p-3.5 bg-amber-50/80 rounded-xl border border-amber-200 text-amber-950 text-sm leading-relaxed">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-800 uppercase tracking-wide mb-1.5">
+                  <BookOpen className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Lời dẫn / Ngữ liệu:</span>
+                </div>
+                <div className="prose prose-sm max-w-none text-amber-950 font-sans">
+                  <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                    {q.context}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+            <div className="prose prose-sm max-w-none text-gray-900 font-medium leading-relaxed">
               <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
                 {q.content}
               </ReactMarkdown>
@@ -158,23 +188,50 @@ const QuestionItem = React.memo(({
               <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border border-gray-100 max-h-64 object-contain" referrerPolicy="no-referrer" />
             )}
             {(q.type === "MC" || q.type === "TF") && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 ml-4">
-                {q.options?.map((opt, oIdx) => (
-                  <div key={opt.id} className={`p-3 rounded-xl border flex gap-3 ${opt.isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-gray-100'}`}>
-                    <span className="font-bold">{q.type === "TF" ? String.fromCharCode(97 + oIdx) : opt.id}.</span>
-                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                      {opt.text}
-                    </ReactMarkdown>
-                  </div>
-                ))}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                {q.options?.map((opt, oIdx) => {
+                  const isCorrect = opt.isCorrect;
+                  const label = q.type === "MC" ? opt.id : String.fromCharCode(97 + oIdx);
+                  return (
+                    <div 
+                      key={opt.id} 
+                      className={`p-3.5 rounded-xl border-2 flex items-start gap-3 transition-all ${
+                        isCorrect 
+                          ? 'bg-emerald-700 text-white border-emerald-800 shadow-md ring-2 ring-emerald-400/40 font-semibold' 
+                          : 'bg-white border-gray-200 text-gray-700 shadow-xs'
+                      }`}
+                    >
+                      <span className={`px-2 py-0.5 rounded-md text-xs font-black shrink-0 ${
+                        isCorrect ? 'bg-white text-emerald-900 shadow-xs' : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {label}.
+                      </span>
+                      <div className="flex-1 text-sm leading-relaxed">
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {opt.text}
+                        </ReactMarkdown>
+                      </div>
+                      {isCorrect && (
+                        <span className="shrink-0 px-2 py-0.5 text-[10px] font-black bg-emerald-900 text-white rounded-full border border-emerald-500 shadow-xs">
+                          {q.type === "MC" ? "✓ ĐÁP ÁN ĐÚNG" : "ĐÚNG"}
+                        </span>
+                      )}
+                      {!isCorrect && q.type === "TF" && (
+                        <span className="shrink-0 px-2 py-0.5 text-[10px] font-bold bg-rose-50 text-rose-700 rounded-full border border-rose-200">
+                          SAI
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
             {q.type === "SA" && (
-              <div className="ml-4 p-3 bg-blue-50 rounded-xl border border-blue-100 text-blue-700 flex gap-2">
-                <span className="font-bold">Đáp án:</span>
-                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                  {q.correctAnswer || ""}
-                </ReactMarkdown>
+              <div className="p-3 bg-blue-50 rounded-xl border-2 border-blue-200 text-blue-900 flex gap-2 items-center font-semibold">
+                <span className="text-blue-700">Đáp án chính xác:</span>
+                <span className="px-2.5 py-1 bg-white rounded-lg border border-blue-300 font-mono text-blue-950 font-bold">
+                  {q.correctAnswer || "(Chưa có đáp án)"}
+                </span>
               </div>
             )}
           </div>
@@ -184,26 +241,31 @@ const QuestionItem = React.memo(({
   }
 
   return (
-    <Card className={`border-none shadow-sm transition-all ${editingId === q.id ? 'ring-2 ring-blue-500' : ''}`}>
+    <Card className={`border-none shadow-sm transition-all bg-white ${editingId === q.id ? 'ring-2 ring-blue-500 shadow-md' : ''}`}>
       <CardContent className="p-6">
         <div className="flex justify-between items-start mb-4">
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-100">
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold">
               Câu {idx + 1}
             </Badge>
-            <Badge variant="secondary" className="text-[10px] uppercase">
+            <Badge variant="secondary" className="text-[10px] uppercase font-bold">
               {q.type}
             </Badge>
-            <Badge variant="secondary" className="text-[10px] uppercase bg-orange-50 text-orange-700 border-orange-100">
+            <Badge variant="secondary" className="text-[10px] uppercase bg-orange-50 text-orange-700 border-orange-200 font-medium">
               {q.level}
             </Badge>
-            <Badge variant="secondary" className="text-[10px] uppercase bg-green-50 text-green-700 border-green-100">
+            <Badge variant="secondary" className="text-[10px] uppercase bg-green-50 text-green-700 border-green-200 font-bold">
               {q.points || 0} điểm
             </Badge>
+            {q.context && (
+              <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-800 border-amber-300 flex items-center gap-1">
+                <BookOpen className="w-3 h-3 text-amber-600" /> Có Lời dẫn
+              </Badge>
+            )}
           </div>
           <div className="flex gap-1">
             <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-blue-600" onClick={() => setEditingId(editingId === q.id ? null : q.id)}>
-              {editingId === q.id ? <Check className="h-4 w-4" /> : <Edit2 className="h-4 w-4" />}
+              {editingId === q.id ? <Check className="h-4 w-4 text-blue-600" /> : <Edit2 className="h-4 w-4" />}
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600" onClick={() => setShowDeleteConfirm(true)}>
               <Trash2 className="h-4 w-4" />
@@ -252,6 +314,32 @@ const QuestionItem = React.memo(({
                   className="h-8 text-xs"
                 />
               </div>
+            </div>
+
+            {/* Context / Lời dẫn editing */}
+            <div className="space-y-1 p-3 bg-amber-50/60 rounded-xl border border-amber-200">
+              <div className="flex justify-between items-center">
+                <label className="text-[10px] font-bold text-amber-800 uppercase flex items-center gap-1.5">
+                  <BookOpen className="w-3.5 h-3.5 text-amber-600" />
+                  Lời dẫn / Ngữ liệu chung (Tùy chọn - Dùng chung hoặc riêng cho câu này)
+                </label>
+                {localContext && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-5 text-[10px] text-amber-700 hover:text-red-600 px-1"
+                    onClick={() => setLocalContext("")}
+                  >
+                    Xóa lời dẫn
+                  </Button>
+                )}
+              </div>
+              <Textarea 
+                value={localContext} 
+                onChange={(e) => setLocalContext(e.target.value)}
+                className="min-h-[60px] text-xs font-mono bg-white border-amber-200 focus:border-amber-400"
+                placeholder="Nhập lời dẫn, bối cảnh bài toán hoặc đoạn văn đọc hiểu nếu có..."
+              />
             </div>
             
             <div className="space-y-1">
@@ -319,7 +407,7 @@ const QuestionItem = React.memo(({
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="text-[10px] font-bold text-gray-400 uppercase">
-                    {q.type === "MC" ? "Các phương án (A, B, C, D)" : "Các ý Đúng/Sai (a, b, c, d)"}
+                    {q.type === "MC" ? "Các phương án (A, B, C, D) — Tích chọn đáp án đúng" : "Các ý Đúng/Sai (a, b, c, d) — Tích chọn ý đúng"}
                   </label>
                   {q.type === "TF" && q.options.length < 4 && (
                     <Button 
@@ -337,53 +425,81 @@ const QuestionItem = React.memo(({
                     </Button>
                   )}
                 </div>
-                {q.options.map((opt, optIdx) => (
-                  <div key={opt.id} className="flex items-center gap-2">
-                    <div className="flex flex-col items-center">
-                      <Checkbox 
-                        checked={opt.isCorrect} 
-                        onCheckedChange={(val) => {
-                          const newOpts = q.options!.map((o, i) => 
-                            q.type === "MC" 
-                              ? { ...o, isCorrect: i === optIdx ? !!val : false }
-                              : i === optIdx ? { ...o, isCorrect: !!val } : o
-                          );
+                {q.options.map((opt, optIdx) => {
+                  const isCorrect = opt.isCorrect;
+                  const label = q.type === "TF" ? String.fromCharCode(97 + optIdx) : opt.id;
+                  
+                  return (
+                    <div 
+                      key={opt.id} 
+                      className={`flex items-center gap-2 p-2.5 rounded-xl border-2 transition-all ${
+                        isCorrect 
+                          ? 'bg-emerald-50 border-emerald-500 shadow-xs text-emerald-950' 
+                          : 'bg-white border-gray-200 text-gray-700'
+                      }`}
+                    >
+                      <div className="flex flex-col items-center shrink-0">
+                        <Checkbox 
+                          checked={opt.isCorrect} 
+                          onCheckedChange={(val) => {
+                            const newOpts = q.options!.map((o, i) => 
+                              q.type === "MC" 
+                                ? { ...o, isCorrect: i === optIdx ? !!val : false }
+                                : i === optIdx ? { ...o, isCorrect: !!val } : o
+                            );
+                            updateQuestion(q.id, { options: newOpts });
+                          }}
+                          className={isCorrect ? "border-emerald-600 data-[state=checked]:bg-emerald-700" : ""}
+                        />
+                        <span className={`text-[9px] font-bold mt-0.5 ${isCorrect ? 'text-emerald-700' : 'text-gray-400'}`}>
+                          {q.type === "TF" ? (opt.isCorrect ? "Đúng" : "Sai") : (opt.isCorrect ? "Đúng" : "Sai")}
+                        </span>
+                      </div>
+                      <span className={`text-xs font-black w-5 text-center px-1 py-0.5 rounded ${
+                        isCorrect ? 'bg-emerald-700 text-white shadow-xs' : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {label}
+                      </span>
+                      <Input 
+                        value={opt.text} 
+                        onChange={(e) => {
+                          const newOpts = q.options!.map(o => o.id === opt.id ? { ...o, text: e.target.value } : o);
                           updateQuestion(q.id, { options: newOpts });
                         }}
+                        className={`h-8 text-xs font-mono flex-1 ${
+                          isCorrect ? 'border-emerald-400 bg-white font-semibold text-emerald-950 focus:border-emerald-600' : 'border-gray-200 bg-white'
+                        }`}
+                        placeholder="Nhập phương án..."
                       />
-                      <span className="text-[8px] text-gray-400 mt-0.5">{q.type === "TF" ? (opt.isCorrect ? "Đúng" : "Sai") : "Đúng"}</span>
+                      <div className={`text-[11px] px-2.5 py-1 rounded-lg border min-w-[100px] ${
+                        isCorrect ? 'bg-emerald-700 text-white border-emerald-800 font-medium' : 'bg-gray-50 text-gray-700 border-gray-200'
+                      }`}>
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {opt.text || "..."}
+                        </ReactMarkdown>
+                      </div>
+                      {isCorrect && (
+                        <span className="shrink-0 px-2 py-0.5 text-[10px] font-black bg-emerald-700 text-white rounded-full shadow-xs uppercase tracking-wider">
+                          {q.type === "MC" ? "Đáp án đúng" : "Đúng"}
+                        </span>
+                      )}
+                      {q.type === "TF" && (
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-6 w-6 text-gray-300 hover:text-red-500 shrink-0"
+                          onClick={() => {
+                            const newOpts = q.options!.filter(o => o.id !== opt.id)
+                              .map((o, i) => ({ ...o, id: String.fromCharCode(97 + i) }));
+                            updateQuestion(q.id, { options: newOpts });
+                          }}
+                        >
+                          <X className="w-3 h-3" />
+                        </Button>
+                      )}
                     </div>
-                    <span className="text-xs font-bold w-4">{q.type === "TF" ? String.fromCharCode(97 + optIdx) : opt.id}</span>
-                    <Input 
-                      value={opt.text} 
-                      onChange={(e) => {
-                        const newOpts = q.options!.map(o => o.id === opt.id ? { ...o, text: e.target.value } : o);
-                        updateQuestion(q.id, { options: newOpts });
-                      }}
-                      className="h-8 text-xs font-mono"
-                      placeholder="Nhập phương án..."
-                    />
-                    <div className="text-[10px] bg-white px-2 py-1 rounded border border-gray-100 min-w-[100px]">
-                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                        {opt.text || "..."}
-                      </ReactMarkdown>
-                    </div>
-                    {q.type === "TF" && (
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-6 w-6 text-gray-300 hover:text-red-500"
-                        onClick={() => {
-                          const newOpts = q.options!.filter(o => o.id !== opt.id)
-                            .map((o, i) => ({ ...o, id: String.fromCharCode(97 + i) }));
-                          updateQuestion(q.id, { options: newOpts });
-                        }}
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -393,7 +509,7 @@ const QuestionItem = React.memo(({
                 <Input 
                   value={q.correctAnswer} 
                   onChange={(e) => updateQuestion(q.id, { correctAnswer: e.target.value })}
-                  className="h-8 text-xs font-mono"
+                  className="h-8 text-xs font-mono font-bold text-blue-900 border-blue-300 bg-blue-50/50"
                   placeholder="Nhập đáp án chính xác..."
                 />
               </div>
@@ -419,7 +535,20 @@ const QuestionItem = React.memo(({
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="prose prose-sm max-w-none">
+            {showContextInsideCard && q.context && (
+              <div className="p-3.5 bg-amber-50/80 rounded-xl border border-amber-200 text-amber-950 text-sm leading-relaxed">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-800 uppercase tracking-wide mb-1.5">
+                  <BookOpen className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Lời dẫn / Ngữ liệu:</span>
+                </div>
+                <div className="prose prose-sm max-w-none text-amber-950 font-sans">
+                  <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                    {q.context}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+            <div className="prose prose-sm max-w-none text-gray-900 font-medium leading-relaxed">
               <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
                 {q.content || "*Chưa có nội dung*"}
               </ReactMarkdown>
@@ -428,23 +557,50 @@ const QuestionItem = React.memo(({
               <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border border-gray-100 max-h-40 object-contain" referrerPolicy="no-referrer" />
             )}
             {(q.type === "MC" || q.type === "TF") && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 ml-4">
-                {q.options?.map((opt, oIdx) => (
-                  <div key={opt.id} className={`p-2 rounded border flex gap-2 ${opt.isCorrect ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-gray-100'}`}>
-                    <span className="font-bold">{q.type === "TF" ? String.fromCharCode(97 + oIdx) : opt.id}.</span>
-                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                      {opt.text}
-                    </ReactMarkdown>
-                  </div>
-                ))}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                {q.options?.map((opt, oIdx) => {
+                  const isCorrect = opt.isCorrect;
+                  const label = q.type === "MC" ? opt.id : String.fromCharCode(97 + oIdx);
+                  return (
+                    <div 
+                      key={opt.id} 
+                      className={`p-3 rounded-xl border-2 flex items-start gap-3 transition-all ${
+                        isCorrect 
+                          ? 'bg-emerald-700 text-white border-emerald-800 shadow-md ring-2 ring-emerald-500/40 font-semibold' 
+                          : 'bg-white border-gray-200 text-gray-800 hover:border-gray-300'
+                      }`}
+                    >
+                      <span className={`px-2.5 py-0.5 rounded-lg text-xs font-black shrink-0 ${
+                        isCorrect ? 'bg-white text-emerald-900 shadow-sm' : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {label}.
+                      </span>
+                      <div className="flex-1 text-sm leading-relaxed">
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {opt.text}
+                        </ReactMarkdown>
+                      </div>
+                      {isCorrect && (
+                        <span className="shrink-0 px-2 py-0.5 text-[10px] font-black bg-emerald-900 text-white rounded-full border border-emerald-600 shadow-sm">
+                          {q.type === "MC" ? "✓ ĐÁP ÁN ĐÚNG" : "ĐÚNG"}
+                        </span>
+                      )}
+                      {!isCorrect && q.type === "TF" && (
+                        <span className="shrink-0 px-2 py-0.5 text-[10px] font-bold bg-rose-50 text-rose-700 rounded-full border border-rose-200">
+                          SAI
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
             {q.type === "SA" && (
-              <div className="ml-4 p-2 bg-blue-50 rounded border border-blue-100 text-blue-700 flex gap-2">
-                <span className="font-bold">Đáp án:</span>
-                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                  {q.correctAnswer || ""}
-                </ReactMarkdown>
+              <div className="p-3 bg-blue-50 rounded-xl border-2 border-blue-200 text-blue-900 flex gap-2 items-center font-semibold">
+                <span className="text-blue-700">Đáp án chính xác:</span>
+                <span className="px-2.5 py-1 bg-white rounded-lg border border-blue-300 font-mono text-blue-950 font-bold">
+                  {q.correctAnswer || "(Chưa có đáp án)"}
+                </span>
               </div>
             )}
             {q.explanation && (
@@ -800,6 +956,17 @@ export default function ExamGenerator({
       ];
 
       examData.questions.forEach((q, idx) => {
+        // If question has context and is new
+        if (q.context && (idx === 0 || examData.questions[idx - 1].context !== q.context)) {
+          children.push(new Paragraph({
+            children: [
+              new TextRun({ text: "📖 Lời dẫn / Ngữ liệu chung: ", bold: true, color: "B45309" }),
+              ...parseMarkdownToRuns(q.context)
+            ],
+            spacing: { before: 240, after: 120 }
+          }));
+        }
+
         children.push(new Paragraph({
           children: [
             new TextRun({ text: `Câu ${idx + 1}: `, bold: true }),
@@ -1202,9 +1369,9 @@ export default function ExamGenerator({
       </div>
 
       {/* Output Section */}
-      <div className="lg:col-span-8 h-[calc(100vh-220px)] min-h-[600px]">
+      <div className="lg:col-span-8 flex flex-col min-h-[900px] lg:min-h-full">
         {loading ? (
-          <Card className="border-none shadow-sm h-full min-h-[600px]">
+          <Card className="border-none shadow-sm h-full min-h-[700px]">
             <CardContent className="p-12 space-y-6">
               <Skeleton className="h-8 w-3/4" />
               <Skeleton className="h-4 w-full" />
@@ -1220,9 +1387,9 @@ export default function ExamGenerator({
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col h-full"
+            className="flex flex-col flex-1 h-full min-h-[900px]"
           >
-            <div className="bg-white border-b p-4 flex justify-between items-center rounded-t-2xl sticky top-0 z-10">
+            <div className="bg-white/95 backdrop-blur-md border-b p-4 flex justify-between items-center rounded-t-2xl sticky top-2 z-20 shadow-sm">
               <div className="flex items-center gap-2">
                 <div className="bg-blue-100 p-2 rounded-lg">
                   <FileText className="w-5 h-5 text-blue-600" />
@@ -1268,7 +1435,7 @@ export default function ExamGenerator({
                   <Save className="w-4 h-4 mr-2" /> Lưu nháp
                 </Button>
                 <Button 
-                  className="bg-blue-600 hover:bg-blue-700 text-white" 
+                  className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm" 
                   size="sm"
                   onClick={() => handlePublish('published')}
                   disabled={publishing}
@@ -1293,11 +1460,28 @@ export default function ExamGenerator({
               </div>
             </div>
             
-            <div className="flex-1 bg-gray-50 p-4 rounded-b-2xl shadow-sm overflow-y-auto custom-scrollbar">
-              <div className="space-y-4 max-w-4xl mx-auto pb-20">
+            <div className="flex-1 bg-gray-50/70 p-6 rounded-b-2xl shadow-sm space-y-6">
+              <div className="space-y-6 max-w-4xl mx-auto pb-24">
                 {examData.questions.map((q, idx) => {
                   const prevQ = idx > 0 ? examData.questions[idx - 1] : null;
                   const showHeader = !prevQ || prevQ.type !== q.type;
+
+                  // Lời dẫn / Context grouping logic
+                  const prevContext = prevQ?.context?.trim();
+                  const currentContext = q.context?.trim();
+                  const isNewContext = !!currentContext && currentContext !== prevContext;
+
+                  // Count how many consecutive questions share this exact context
+                  let sharedCount = 0;
+                  if (currentContext) {
+                    for (let k = idx; k < examData.questions.length; k++) {
+                      if (examData.questions[k].context?.trim() === currentContext) {
+                        sharedCount++;
+                      } else {
+                        break;
+                      }
+                    }
+                  }
                   
                   // Calculate range for this part
                   const questionsOfThisType = examData.questions.filter(quest => quest.type === q.type);
@@ -1366,6 +1550,31 @@ export default function ExamGenerator({
                           )}
                         </div>
                       )}
+
+                      {/* Special Decorated Box for Shared Context / Lời dẫn */}
+                      {isNewContext && currentContext && (
+                        <div className="my-5 p-5 bg-gradient-to-r from-amber-50 via-amber-50/70 to-orange-50/60 rounded-2xl border-2 border-amber-300 shadow-sm relative overflow-hidden">
+                          <div className="flex items-center gap-2 text-amber-900 font-bold text-sm uppercase tracking-wide mb-2.5 pb-2 border-b border-amber-200/80">
+                            <BookOpen className="w-4.5 h-4.5 text-amber-600 shrink-0" />
+                            <span>📖 Lời dẫn / Ngữ liệu chung</span>
+                            {sharedCount > 1 ? (
+                              <Badge variant="outline" className="bg-amber-100 text-amber-900 border-amber-300 text-[11px] font-semibold ml-auto">
+                                Áp dụng cho {sharedCount} câu liên tiếp (từ Câu {idx + 1} đến Câu {idx + sharedCount})
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-amber-100 text-amber-900 border-amber-300 text-[11px] font-semibold ml-auto">
+                                Ngữ liệu câu hỏi
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="text-sm text-amber-950 prose prose-sm max-w-none leading-relaxed font-sans">
+                            <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                              {currentContext}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+
                       <QuestionItem 
                         q={q}
                         idx={idx}
@@ -1374,6 +1583,7 @@ export default function ExamGenerator({
                         updateQuestion={updateQuestion}
                         deleteQuestion={deleteQuestion}
                         previewMode={previewMode}
+                        showContextInsideCard={false}
                       />
                     </React.Fragment>
                   );
@@ -1393,7 +1603,7 @@ export default function ExamGenerator({
             </div>
           </motion.div>
         ) : (
-          <div className="h-full min-h-[600px] border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center text-center p-12 bg-white/50">
+          <div className="h-full min-h-[700px] border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center text-center p-12 bg-white/50">
             <div className="bg-gray-100 p-6 rounded-full mb-6">
               <Sparkles className="w-12 h-12 text-gray-300" />
             </div>

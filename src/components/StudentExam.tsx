@@ -12,7 +12,8 @@ import {
   BookOpen,
   Trophy,
   RefreshCw,
-  GraduationCap
+  GraduationCap,
+  School
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -33,6 +34,8 @@ import rehypeKatex from "rehype-katex";
 export default function StudentExam() {
   const [examCode, setExamCode] = useState("");
   const [studentName, setStudentName] = useState("");
+  const [studentClass, setStudentClass] = useState("");
+  const [schoolName, setSchoolName] = useState("");
   const [exam, setExam] = useState<Exam | null>(null);
   const [loading, setLoading] = useState(false);
   const [started, setStarted] = useState(false);
@@ -88,7 +91,11 @@ export default function StudentExam() {
 
   const startExam = () => {
     if (!studentName.trim()) {
-      toast.error("Vui lòng nhập họ tên của bạn.");
+      toast.error("Vui lòng nhập họ và tên của bạn.");
+      return;
+    }
+    if (!studentClass.trim()) {
+      toast.error("Vui lòng nhập tên lớp của bạn.");
       return;
     }
     setStarted(true);
@@ -164,8 +171,16 @@ export default function StudentExam() {
       // Ensure score is within 0-10 range and rounded
       const finalScore = Math.min(10, Math.max(0, totalScore));
 
+      const name = studentName.trim();
+      const sClass = studentClass.trim();
+      const sSchool = schoolName.trim();
+      const combined = [name, sClass, sSchool].filter(Boolean).join(" _ ");
+
       const resultData = {
-        studentName,
+        studentName: name,
+        studentClass: sClass,
+        schoolName: sSchool,
+        displayNameCombined: combined,
         examId: exam.id,
         examTitle: exam.title,
         teacherId: exam.teacherId,
@@ -213,14 +228,32 @@ export default function StudentExam() {
                   <p className="text-4xl font-black text-green-600">{result.correctAnswers}/{result.totalQuestions}</p>
                 </div>
               </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
+              <div className="space-y-3 pt-2">
+                <div className="flex justify-between items-center text-sm pb-2 border-b border-gray-100">
                   <span className="text-gray-500">Học sinh:</span>
-                  <span className="font-bold">{result.studentName}</span>
+                  <span className="font-bold text-gray-900">{result.studentName}</span>
                 </div>
-                <div className="flex justify-between text-sm">
+                {result.studentClass && (
+                  <div className="flex justify-between items-center text-sm pb-2 border-b border-gray-100">
+                    <span className="text-gray-500">Lớp:</span>
+                    <span className="font-semibold text-blue-700">{result.studentClass}</span>
+                  </div>
+                )}
+                {result.schoolName && (
+                  <div className="flex justify-between items-center text-sm pb-2 border-b border-gray-100">
+                    <span className="text-gray-500">Trường:</span>
+                    <span className="font-semibold text-gray-800">{result.schoolName}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center text-sm pb-2 border-b border-gray-100">
+                  <span className="text-gray-500">Định danh kết quả:</span>
+                  <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                    {result.displayNameCombined || [result.studentName, result.studentClass, result.schoolName].filter(Boolean).join(" _ ")}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
                   <span className="text-gray-500">Thời gian nộp:</span>
-                  <span>{new Date(result.submittedAt).toLocaleString()}</span>
+                  <span className="text-xs text-gray-600">{new Date(result.submittedAt).toLocaleString("vi-VN")}</span>
                 </div>
               </div>
               <div className="flex gap-3">
@@ -250,99 +283,140 @@ export default function StudentExam() {
                 isCorrect = studentAnswer?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase();
               }
 
+              // Context check
+              const prevContext = idx > 0 ? exam.questions[idx - 1]?.context?.trim() : undefined;
+              const currentContext = q.context?.trim();
+              const isNewContext = !!currentContext && currentContext !== prevContext;
+
               return (
-                <Card key={q.id} className={`border-none shadow-sm ${isCorrect ? 'ring-2 ring-green-100' : 'ring-2 ring-red-100'}`}>
-                  <CardHeader>
-                    <div className="flex justify-between items-center mb-2">
-                      <Badge variant="outline" className={isCorrect ? "text-green-600 bg-green-50 border-green-100" : "text-red-600 bg-red-50 border-red-100"}>
-                        Câu {idx + 1} - {isCorrect ? "Đúng" : "Sai"}
-                      </Badge>
-                      <Badge variant="secondary" className="text-[10px] uppercase bg-gray-50 text-gray-600 border-gray-100">
-                        {q.points || (q.type === "TF" ? 1.0 : 0.25)} điểm
-                      </Badge>
+                <React.Fragment key={q.id}>
+                  {isNewContext && currentContext && (
+                    <div className="p-5 bg-gradient-to-r from-amber-50 via-amber-50/70 to-orange-50/60 rounded-2xl border-2 border-amber-300 shadow-sm">
+                      <div className="flex items-center gap-2 text-amber-900 font-bold text-sm uppercase tracking-wide mb-2.5 pb-2 border-b border-amber-200/80">
+                        <BookOpen className="w-4.5 h-4.5 text-amber-600 shrink-0" />
+                        <span>📖 Lời dẫn / Ngữ liệu chung</span>
+                      </div>
+                      <div className="text-sm text-amber-950 prose prose-sm max-w-none leading-relaxed font-sans">
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {currentContext}
+                        </ReactMarkdown>
+                      </div>
                     </div>
-                    <CardTitle className="text-lg leading-relaxed">
-                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                        {q.content}
-                      </ReactMarkdown>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {q.type === "MC" && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {q.options?.map((opt) => {
-                          const isStudentChoice = studentAnswer === opt.id;
-                          const isCorrectOpt = opt.isCorrect;
-                          return (
-                            <div key={opt.id} className={`p-3 rounded-xl border flex gap-3 ${
-                              isCorrectOpt ? 'bg-green-50 border-green-200 text-green-700' : 
-                              isStudentChoice ? 'bg-red-50 border-red-200 text-red-700' : 'bg-white border-gray-100'
-                            }`}>
-                              <span className="font-bold">{opt.id}.</span>
-                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                {opt.text}
-                              </ReactMarkdown>
-                              {isCorrectOpt && <CheckCircle2 className="w-4 h-4 ml-auto shrink-0" />}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    
-                    {q.type === "TF" && (
-                      <div className="space-y-2">
-                        {q.options?.map((opt, i) => {
-                          const studentChoice = studentAnswer?.[`opt_${i}`];
-                          const isCorrectChoice = studentChoice === opt.isCorrect;
-                          return (
-                            <div key={opt.id} className={`p-3 rounded-xl border flex justify-between items-center ${
-                              isCorrectChoice ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'
-                            }`}>
-                              <div className="flex gap-3">
-                                <span className="font-bold">{String.fromCharCode(97 + i)}.</span>
-                                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                  {opt.text}
-                                </ReactMarkdown>
-                              </div>
-                              <div className="flex gap-2 text-xs font-bold">
-                                <span className={studentChoice === true ? "text-blue-600" : "text-gray-400"}>Đúng</span>
-                                <span className={studentChoice === false ? "text-red-600" : "text-gray-400"}>Sai</span>
-                                <span className="mx-2">|</span>
-                                <span className="text-green-600">Đáp án: {opt.isCorrect ? "Đúng" : "Sai"}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                  )}
 
-                    {q.type === "SA" && (
-                      <div className="space-y-2">
-                        <div className={`p-3 rounded-xl border ${isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                          <p className="text-xs font-bold uppercase text-gray-400 mb-1">Câu trả lời của bạn:</p>
-                          <p className="font-mono">{studentAnswer || "(Trống)"}</p>
+                  <Card className={`border-none shadow-sm ${isCorrect ? 'ring-2 ring-emerald-200 bg-white' : 'ring-2 ring-rose-200 bg-white'}`}>
+                    <CardHeader>
+                      <div className="flex justify-between items-center mb-2">
+                        <Badge variant="outline" className={isCorrect ? "text-emerald-700 bg-emerald-50 border-emerald-300 font-bold" : "text-rose-700 bg-rose-50 border-rose-300 font-bold"}>
+                          Câu {idx + 1} - {isCorrect ? "✓ Chính xác" : "✗ Chưa chính xác"}
+                        </Badge>
+                        <Badge variant="secondary" className="text-[10px] uppercase bg-gray-100 text-gray-700 border-gray-200 font-bold">
+                          {q.points || (q.type === "TF" ? 1.0 : 0.25)} điểm
+                        </Badge>
+                      </div>
+                      <CardTitle className="text-lg leading-relaxed">
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {q.content}
+                        </ReactMarkdown>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {q.type === "MC" && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {q.options?.map((opt) => {
+                            const isStudentChoice = studentAnswer === opt.id;
+                            const isCorrectOpt = opt.isCorrect;
+                            return (
+                              <div key={opt.id} className={`p-3.5 rounded-xl border-2 flex items-start gap-3 transition-all ${
+                                isCorrectOpt 
+                                  ? 'bg-emerald-700 text-white border-emerald-800 shadow-md font-semibold' 
+                                  : isStudentChoice 
+                                  ? 'bg-rose-100 text-rose-900 border-rose-300 font-medium' 
+                                  : 'bg-white text-gray-700 border-gray-200'
+                              }`}>
+                                <span className={`px-2 py-0.5 rounded text-xs font-black shrink-0 ${
+                                  isCorrectOpt ? 'bg-white text-emerald-900 shadow-xs' : isStudentChoice ? 'bg-rose-200 text-rose-900' : 'bg-gray-100 text-gray-700'
+                                }`}>
+                                  {opt.id}.
+                                </span>
+                                <div className="flex-1 text-sm leading-relaxed">
+                                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                    {opt.text}
+                                  </ReactMarkdown>
+                                </div>
+                                {isCorrectOpt && (
+                                  <span className="shrink-0 px-2 py-0.5 text-[10px] font-black bg-emerald-900 text-white rounded-full">
+                                    ĐÁP ÁN ĐÚNG
+                                  </span>
+                                )}
+                                {!isCorrectOpt && isStudentChoice && (
+                                  <span className="shrink-0 px-2 py-0.5 text-[10px] font-bold bg-rose-200 text-rose-800 rounded-full">
+                                    LỰA CHỌN CỦA BẠN
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                        {!isCorrect && (
-                          <div className="p-3 rounded-xl border bg-green-50 border-green-200">
-                            <p className="text-xs font-bold uppercase text-green-600 mb-1">Đáp án đúng:</p>
-                            <p className="font-mono text-green-700">{q.correctAnswer}</p>
+                      )}
+                      
+                      {q.type === "TF" && (
+                        <div className="space-y-2">
+                          {q.options?.map((opt, i) => {
+                            const studentChoice = studentAnswer?.[`opt_${i}`];
+                            const isCorrectChoice = studentChoice === opt.isCorrect;
+                            return (
+                              <div key={opt.id} className={`p-3 rounded-xl border-2 flex justify-between items-center ${
+                                isCorrectChoice ? 'bg-emerald-50 border-emerald-300' : 'bg-rose-50 border-rose-300'
+                              }`}>
+                                <div className="flex gap-3 items-start">
+                                  <span className="font-bold text-sm">{String.fromCharCode(97 + i)}.</span>
+                                  <div className="text-sm">
+                                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                      {opt.text}
+                                    </ReactMarkdown>
+                                  </div>
+                                </div>
+                                <div className="flex gap-2 text-xs font-bold shrink-0 ml-4">
+                                  <span className={`px-2 py-0.5 rounded ${studentChoice === true ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-400"}`}>Đúng</span>
+                                  <span className={`px-2 py-0.5 rounded ${studentChoice === false ? "bg-red-600 text-white" : "bg-gray-100 text-gray-400"}`}>Sai</span>
+                                  <span className="mx-1 self-center text-gray-300">|</span>
+                                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-700 text-white font-black">Đáp án: {opt.isCorrect ? "Đúng" : "Sai"}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {q.type === "SA" && (
+                        <div className="space-y-2">
+                          <div className={`p-3 rounded-xl border-2 ${isCorrect ? 'bg-emerald-50 border-emerald-300' : 'bg-rose-50 border-rose-300'}`}>
+                            <p className="text-xs font-bold uppercase text-gray-500 mb-1">Câu trả lời của bạn:</p>
+                            <p className="font-mono font-bold text-gray-900">{studentAnswer || "(Chưa nhập câu trả lời)"}</p>
                           </div>
-                        )}
-                      </div>
-                    )}
-
-                    {q.explanation && (
-                      <div className="p-4 bg-amber-50 rounded-xl border border-amber-100 mt-4">
-                        <div className="text-xs font-bold text-amber-600 uppercase mb-2">Giải thích chi tiết:</div>
-                        <div className="text-sm prose prose-sm max-w-none text-amber-900">
-                          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                            {q.explanation}
-                          </ReactMarkdown>
+                          {!isCorrect && (
+                            <div className="p-3 rounded-xl border-2 bg-emerald-50 border-emerald-400">
+                              <p className="text-xs font-bold uppercase text-emerald-800 mb-1">Đáp án đúng:</p>
+                              <p className="font-mono text-emerald-900 font-bold">{q.correctAnswer}</p>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                      )}
+
+                      {q.explanation && (
+                        <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 mt-4">
+                          <div className="text-xs font-bold text-amber-800 uppercase mb-1">Giải thích chi tiết:</div>
+                          <div className="text-sm prose prose-sm max-w-none text-amber-950">
+                            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                              {q.explanation}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </React.Fragment>
               );
             })}
             <div className="flex justify-center pb-12">
@@ -422,6 +496,19 @@ export default function StudentExam() {
                         {currentQuestion.points || (currentQuestion.type === "TF" ? 1.0 : 0.25)} điểm
                       </Badge>
                     </div>
+                    {currentQuestion.context && (
+                      <div className="my-2 p-4 bg-amber-50/90 rounded-2xl border-2 border-amber-200/90 text-amber-950 text-sm leading-relaxed shadow-xs">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900 uppercase tracking-wide mb-2 pb-1 border-b border-amber-200/70">
+                          <BookOpen className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span>📖 Lời dẫn / Ngữ liệu chung</span>
+                        </div>
+                        <div className="prose prose-sm max-w-none text-amber-950 font-sans">
+                          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                            {currentQuestion.context}
+                          </ReactMarkdown>
+                        </div>
+                      </div>
+                    )}
                     <CardTitle className="text-lg leading-relaxed">
                       <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                         {currentQuestion.content}
@@ -609,17 +696,55 @@ export default function StudentExam() {
                     <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {exam.timeLimit} phút</span>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Họ và tên của bạn</Label>
-                  <div className="relative">
-                    <User className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
-                    <Input 
-                      placeholder="Nhập họ tên đầy đủ..." 
-                      className="pl-10 h-12 rounded-xl"
-                      value={studentName}
-                      onChange={(e) => setStudentName(e.target.value)}
-                    />
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-gray-700">Họ và tên học sinh *</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                      <Input 
+                        placeholder="Ví dụ: Nguyễn Văn A..." 
+                        className="pl-10 h-11 rounded-xl font-medium"
+                        value={studentName}
+                        onChange={(e) => setStudentName(e.target.value)}
+                      />
+                    </div>
                   </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold text-gray-700">Lớp *</Label>
+                      <div className="relative">
+                        <GraduationCap className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                        <Input 
+                          placeholder="Ví dụ: 12A1..." 
+                          className="pl-10 h-11 rounded-xl font-medium"
+                          value={studentClass}
+                          onChange={(e) => setStudentClass(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold text-gray-700">Trường học (Tùy chọn)</Label>
+                      <div className="relative">
+                        <School className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                        <Input 
+                          placeholder="Ví dụ: THPT Chuyên Lê Hồng Phong..." 
+                          className="pl-10 h-11 rounded-xl font-medium"
+                          value={schoolName}
+                          onChange={(e) => setSchoolName(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {(studentName || studentClass || schoolName) && (
+                    <div className="p-3 bg-blue-50/80 rounded-xl border border-blue-200 text-xs text-blue-950 flex flex-col gap-1">
+                      <span className="font-bold text-blue-700 text-[10px] uppercase tracking-wider">Định danh hiển thị (Tên _ Lớp _ Trường):</span>
+                      <span className="font-mono font-bold text-blue-900 break-all">
+                        {[studentName.trim(), studentClass.trim(), schoolName.trim()].filter(Boolean).join(" _ ") || "..."}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-3">
                   <Button variant="outline" className="flex-1 h-12 rounded-xl" onClick={() => setExam(null)}>Quay lại</Button>
