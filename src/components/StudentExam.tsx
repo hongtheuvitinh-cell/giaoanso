@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Search, 
@@ -147,15 +147,27 @@ export default function StudentExam() {
     }
   };
 
+  const examCacheRef = useRef<Record<string, Exam>>({});
+
   const handleOpenReviewModal = async (resultItem: any) => {
     setSelectedReviewResult(resultItem);
     setLoadingReview(true);
     setReviewExamData(null);
+
+    const targetExamId = resultItem.examId;
+    if (examCacheRef.current[targetExamId]) {
+      setReviewExamData(examCacheRef.current[targetExamId]);
+      setLoadingReview(false);
+      return;
+    }
+
     try {
-      const docRef = doc(db, "exams", resultItem.examId);
+      const docRef = doc(db, "exams", targetExamId);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        setReviewExamData(docSnap.data() as Exam);
+        const examObj = docSnap.data() as Exam;
+        examCacheRef.current[targetExamId] = examObj;
+        setReviewExamData(examObj);
       } else {
         toast.error("Không tìm thấy dữ liệu đề thi gốc.");
       }
