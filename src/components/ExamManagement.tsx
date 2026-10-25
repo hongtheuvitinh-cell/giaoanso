@@ -100,6 +100,17 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [viewResult, setViewResult] = useState<ExamResult | null>(null);
   const [deleteData, setDeleteData] = useState<{ id: string, type: 'exam' | 'result' | 'folder' | 'student' } | null>(null);
 
+  // Pagination states (12-15 items per page)
+  const [examsPage, setExamsPage] = useState(1);
+  const [studentsPage, setStudentsPage] = useState(1);
+  const [resultsPage, setResultsPage] = useState(1);
+  const [usersPage, setUsersPage] = useState(1);
+
+  useEffect(() => { setExamsPage(1); }, [examSearch, selectedFolderId]);
+  useEffect(() => { setStudentsPage(1); }, [studentSearch]);
+  useEffect(() => { setResultsPage(1); }, [resultSearch, selectedExamId, selectedClass]);
+  useEffect(() => { setUsersPage(1); }, [userSearch]);
+
   // Folder creation modal state
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -135,6 +146,42 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     }
     return e.folderId === currentFolderParentId;
   });
+
+  const renderPagination = (currentPage: number, totalItems: number, pageSize: number, onPageChange: (p: number) => void) => {
+    const totalPages = Math.ceil(totalItems / pageSize) || 1;
+    if (totalPages <= 1) return null;
+
+    return (
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-gray-100 text-xs font-medium text-gray-500">
+        <div>
+          Hiển thị <strong>{Math.min((currentPage - 1) * pageSize + 1, totalItems)}</strong> - <strong>{Math.min(currentPage * pageSize, totalItems)}</strong> trên tổng số <strong>{totalItems}</strong> mục
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="h-8 px-2.5 text-xs font-bold rounded-lg border-gray-200"
+            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+            disabled={currentPage === 1}
+          >
+            ← Trang trước
+          </Button>
+          <span className="px-2 font-bold text-gray-800 text-xs">
+            Trang {currentPage} / {totalPages}
+          </span>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="h-8 px-2.5 text-xs font-bold rounded-lg border-gray-200"
+            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+            disabled={currentPage >= totalPages}
+          >
+            Trang sau →
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   const handleDownloadCsvTemplate = () => {
     const csvContent = "\uFEFF" + "ma_hs,mat_khau,ho_va_ten,lop,truong\n" + "HS1201,123456,Nguyễn Văn A,12A1,THPT Chu Văn An\n" + "HS1202,123456,Trần Thị B,12A2,THPT Chu Văn An";
@@ -483,7 +530,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const availableClasses = Array.from(
     new Set(
       results
-        .filter(r => (userProfile?.role === "admin" || teacherExamIds.has(r.examId)) && (selectedSchool === "all" || r.schoolName?.trim() === selectedSchool))
+        .filter(r => userProfile?.role === "admin" || teacherExamIds.has(r.examId))
         .map(r => r.studentClass?.trim())
         .filter(Boolean) as string[]
     )
@@ -494,9 +541,6 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
       return false;
     }
     if (selectedExamId !== "all" && r.examId !== selectedExamId) {
-      return false;
-    }
-    if (selectedSchool !== "all" && (r.schoolName?.trim() || "") !== selectedSchool) {
       return false;
     }
     if (selectedClass !== "all" && (r.studentClass?.trim() || "") !== selectedClass) {
@@ -661,7 +705,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredExams.map((exam) => {
+            {filteredExams.slice((examsPage - 1) * 12, examsPage * 12).map((exam) => {
               const examFolder = folders.find(f => f.id === exam.folderId);
               return (
                 <Card key={exam.id} className="border-none shadow-sm hover:shadow-md transition-all group bg-white">
@@ -764,6 +808,8 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
               </div>
             )}
           </div>
+
+          {renderPagination(examsPage, filteredExams.length, 12, setExamsPage)}
         </TabsContent>
 
         {/* --- FOLDERS TAB --- */}
@@ -1049,7 +1095,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredStudents.map((st) => (
+                  {filteredStudents.slice((studentsPage - 1) * 15, studentsPage * 15).map((st) => (
                     <tr key={st.id} className="hover:bg-blue-50/30 transition-colors">
                       <td className="px-6 py-4">
                         <div className="font-mono font-bold text-blue-900 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200 w-fit">
@@ -1124,6 +1170,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 </tbody>
               </table>
             </div>
+            {renderPagination(studentsPage, filteredStudents.length, 15, setStudentsPage)}
           </div>
         </TabsContent>
 
@@ -1131,7 +1178,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
         <TabsContent value="results" className="space-y-4">
           <div className="bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-sm space-y-4">
             <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
-              <div className="flex flex-1 flex-wrap sm:flex-nowrap gap-3 items-center">
+              <div className="flex flex-1 flex-wrap lg:flex-nowrap gap-3 items-center">
                 <div className="relative flex-1 min-w-[200px]">
                   <Search className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
                   <Input 
@@ -1142,41 +1189,28 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                   />
                 </div>
 
-                <div className="w-full sm:w-[220px]">
+                {/* Wider Exam / Subject Select */}
+                <div className="w-full sm:w-[320px] shrink-0">
                   <Select value={selectedExamId} onValueChange={setSelectedExamId}>
-                    <SelectTrigger className="h-10 rounded-xl text-xs sm:text-sm">
-                      <FileText className="w-3.5 h-3.5 mr-1 text-blue-600 shrink-0" />
-                      <SelectValue placeholder="Chọn đề thi" />
+                    <SelectTrigger className="h-10 rounded-xl text-xs sm:text-sm font-medium">
+                      <FileText className="w-4 h-4 mr-1.5 text-blue-600 shrink-0" />
+                      <SelectValue placeholder="Chọn đề thi / Môn" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Tất cả đề thi ({exams.length})</SelectItem>
                       {exams.map((ex) => (
-                        <SelectItem key={ex.id} value={ex.id}>{ex.title}</SelectItem>
+                        <SelectItem key={ex.id} value={ex.id}>{ex.title} ({ex.subject})</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
 
-                <div className="w-full sm:w-[200px]">
-                  <Select value={selectedSchool} onValueChange={(val) => { setSelectedSchool(val); setSelectedClass("all"); }}>
-                    <SelectTrigger className="h-10 rounded-xl text-xs sm:text-sm">
-                      <School className="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0" />
-                      <SelectValue placeholder="Chọn trường" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tất cả trường ({availableSchools.length})</SelectItem>
-                      {availableSchools.map((sch) => (
-                        <SelectItem key={sch} value={sch}>{sch}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="w-full sm:w-[160px]">
+                {/* Wider Class Select */}
+                <div className="w-full sm:w-[220px] shrink-0">
                   <Select value={selectedClass} onValueChange={setSelectedClass}>
-                    <SelectTrigger className="h-10 rounded-xl text-xs sm:text-sm">
-                      <GraduationCap className="w-3.5 h-3.5 mr-1 text-purple-600 shrink-0" />
-                      <SelectValue placeholder="Chọn lớp" />
+                    <SelectTrigger className="h-10 rounded-xl text-xs sm:text-sm font-medium">
+                      <GraduationCap className="w-4 h-4 mr-1.5 text-purple-600 shrink-0" />
+                      <SelectValue placeholder="Lọc theo Lớp" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Tất cả lớp ({availableClasses.length})</SelectItem>
@@ -1247,7 +1281,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredResults.map((res) => {
+                  {filteredResults.slice((resultsPage - 1) * 15, resultsPage * 15).map((res) => {
                     const combined = res.displayNameCombined || [res.studentName, res.studentClass, res.schoolName].filter(Boolean).join(" _ ");
                     return (
                       <tr key={res.id} className="hover:bg-blue-50/30 transition-colors">
@@ -1328,6 +1362,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 </tbody>
               </table>
             </div>
+            {renderPagination(resultsPage, filteredResults.length, 15, setResultsPage)}
           </div>
         </TabsContent>
 
