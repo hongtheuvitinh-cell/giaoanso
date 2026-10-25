@@ -189,7 +189,12 @@ export default function StudentExam() {
       toast.success(`Cập nhật mật khẩu mới thành công! Chào em ${pendingStudentAccount.fullName}`);
     } catch (err) {
       console.error("Lỗi cập nhật mật khẩu:", err);
-      toast.error("Lỗi khi cập nhật mật khẩu mới.");
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, `studentAccounts/${pendingStudentAccount.docId}`);
+      } catch (wrappedErr) {
+        console.error(wrappedErr);
+        toast.error("Không thể đổi mật khẩu mới. Vui lòng kiểm tra lại.");
+      }
     } finally {
       setLoading(false);
     }
