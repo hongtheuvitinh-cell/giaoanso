@@ -26,7 +26,15 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { db, doc, getDoc, addDoc, collection, query, where, getDocs, handleFirestoreError, OperationType } from "@/lib/firebase";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogDescription,
+  DialogFooter
+} from "@/components/ui/dialog";
+import { db, doc, getDoc, addDoc, updateDoc, collection, query, where, getDocs, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { Exam, Question } from "@/types";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
@@ -48,6 +56,12 @@ export default function StudentExam() {
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
   const [result, setResult] = useState<any>(null);
   const [showReview, setShowReview] = useState(false);
+
+  // Student First Login Password Change state
+  const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
+  const [pendingStudentAccount, setPendingStudentAccount] = useState<any>(null);
+  const [newPassInput, setNewPassInput] = useState("");
+  const [confirmPassInput, setConfirmPassInput] = useState("");
 
   const fetchExam = async (codeOverride?: string) => {
     const code = (codeOverride || examCode).trim();
@@ -108,25 +122,74 @@ export default function StudentExam() {
       const q = query(collection(db, "studentAccounts"), where("studentId", "==", loginStudentId.trim()));
       const snapshot = await getDocs(q);
       let matchedAccount: any = null;
+      let matchedDocId = "";
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
         if (data.password === loginPassword.trim()) {
           matchedAccount = data;
+          matchedDocId = docSnap.id;
         }
       });
 
       if (matchedAccount) {
-        setStudentName(matchedAccount.fullName);
-        setStudentClass(matchedAccount.studentClass);
-        setSchoolName(matchedAccount.schoolName || "");
-        setStarted(true);
-        toast.success(`Đăng nhập thành công! Chào em ${matchedAccount.fullName}`);
+        if (matchedAccount.mustChangePassword) {
+          setPendingStudentAccount({ ...matchedAccount, docId: matchedDocId });
+          setNewPassInput("");
+          setConfirmPassInput("");
+          setShowPasswordChangeModal(true);
+        } else {
+          setStudentName(matchedAccount.fullName);
+          setStudentClass(matchedAccount.studentClass);
+          setSchoolName(matchedAccount.schoolName || "");
+          setStarted(true);
+          toast.success(`Đăng nhập thành công! Chào em ${matchedAccount.fullName}`);
+        }
       } else {
         toast.error("Mã học sinh hoặc Mật khẩu không chính xác!");
       }
     } catch (err) {
       console.error(err);
       toast.error("Lỗi khi xác thực tài khoản học sinh.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleChangePasswordSubmit = async () => {
+    if (!pendingStudentAccount) return;
+    if (!newPassInput.trim()) {
+      toast.error("Vui lòng nhập mật khẩu mới.");
+      return;
+    }
+    if (newPassInput.trim().length < 4) {
+      toast.error("Mật khẩu mới phải từ 4 ký tự trở lên.");
+      return;
+    }
+    if (newPassInput.trim() === loginPassword.trim()) {
+      toast.error("Mật khẩu mới phải khác với mật khẩu ban đầu.");
+      return;
+    }
+    if (newPassInput.trim() !== confirmPassInput.trim()) {
+      toast.error("Mật khẩu xác nhận không trùng khớp.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, "studentAccounts", pendingStudentAccount.docId), {
+        password: newPassInput.trim(),
+        mustChangePassword: false
+      });
+
+      setStudentName(pendingStudentAccount.fullName);
+      setStudentClass(pendingStudentAccount.studentClass);
+      setSchoolName(pendingStudentAccount.schoolName || "");
+      setShowPasswordChangeModal(false);
+      setStarted(true);
+      toast.success(`Cập nhật mật khẩu mới thành công! Chào em ${pendingStudentAccount.fullName}`);
+    } catch (err) {
+      console.error("Lỗi cập nhật mật khẩu:", err);
+      toast.error("Lỗi khi cập nhật mật khẩu mới.");
     } finally {
       setLoading(false);
     }
@@ -786,6 +849,56 @@ export default function StudentExam() {
           </CardContent>
         </Card>
       </motion.div>
+      {/* First Login Password Change Modal */}
+      <Dialog open={showPasswordChangeModal} onOpenChange={(open) => !open && setShowPasswordChangeModal(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-900 font-bold">
+              <Lock className="w-5 h-5 text-blue-600" />
+              Cập nhật Mật khẩu Lần đầu
+            </DialogTitle>
+            <DialogDescription className="text-gray-600 text-xs pt-1 leading-relaxed">
+              Chào em <strong className="text-blue-900">{pendingStudentAccount?.fullName}</strong> ({pendingStudentAccount?.studentId})! Đây là lần đầu em đăng nhập (hoặc mật khẩu vừa được reset). Để đảm bảo an toàn, em vui lòng tạo mật khẩu mới.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-gray-700">Mật khẩu mới *</Label>
+              <Input 
+                type="password"
+                placeholder="Nhập mật khẩu mới..."
+                value={newPassInput}
+                onChange={(e) => setNewPassInput(e.target.value)}
+                className="h-11 rounded-xl font-medium"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-gray-700">Xác nhận mật khẩu mới *</Label>
+              <Input 
+                type="password"
+                placeholder="Nhập lại mật khẩu mới..."
+                value={confirmPassInput}
+                onChange={(e) => setConfirmPassInput(e.target.value)}
+                className="h-11 rounded-xl font-medium"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setShowPasswordChangeModal(false)}>
+              Hủy bỏ
+            </Button>
+            <Button 
+              onClick={handleChangePasswordSubmit} 
+              disabled={loading}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
+            >
+              {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Lưu MK mới & Bắt đầu làm bài"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

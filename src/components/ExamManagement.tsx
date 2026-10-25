@@ -17,6 +17,7 @@ import {
   Edit2,
   Share2,
   Download,
+  FileUp,
   FileSpreadsheet,
   GraduationCap,
   School,
@@ -32,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -101,6 +103,93 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderGrade, setNewFolderGrade] = useState("12");
+  const [newFolderParentId, setNewFolderParentId] = useState<string>("none");
+  const [currentFolderParentId, setCurrentFolderParentId] = useState<string | null>(null);
+
+  const getBreadcrumbs = (folderId: string | null) => {
+    const crumbs: Folder[] = [];
+    let currId = folderId;
+    while (currId) {
+      const f = folders.find(x => x.id === currId);
+      if (f) {
+        crumbs.unshift(f);
+        currId = f.parentId || null;
+      } else {
+        break;
+      }
+    }
+    return crumbs;
+  };
+
+  const currentLevelFolders = folders.filter(f => {
+    if (currentFolderParentId === null) {
+      return !f.parentId || f.parentId === "none";
+    }
+    return f.parentId === currentFolderParentId;
+  });
+
+  const currentLevelExams = exams.filter(e => {
+    if (currentFolderParentId === null) {
+      return !e.folderId || e.folderId === "none";
+    }
+    return e.folderId === currentFolderParentId;
+  });
+
+  const handleDownloadCsvTemplate = () => {
+    const csvContent = "\uFEFF" + "ma_hs,mat_khau,ho_va_ten,lop,truong\n" + "HS1201,123456,Nguyễn Văn A,12A1,THPT Chu Văn An\n" + "HS1202,123456,Trần Thị B,12A2,THPT Chu Văn An";
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    saveAs(blob, "Mau_Danh_Sach_Hoc_Sinh.csv");
+    toast.success("Đã tải xuống file mẫu CSV thành công!");
+  };
+
+  const handleCsvUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string;
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length <= 1) {
+          toast.error("File CSV không có dữ liệu hoặc sai định dạng.");
+          return;
+        }
+
+        let successCount = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i];
+          const parts = line.split(",").map(p => p.trim().replace(/^["']|["']$/g, ""));
+          if (parts.length >= 4) {
+            const [studentId, password, fullName, studentClass, schoolName] = parts;
+            if (studentId && password && fullName && studentClass) {
+              const accId = `student_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+              const newAcc: StudentAccount = {
+                id: accId,
+                studentId,
+                password,
+                fullName,
+                studentClass,
+                schoolName: schoolName || "",
+                teacherId: userProfile?.uid || "",
+                createdAt: new Date().toISOString(),
+                mustChangePassword: true
+              };
+              await setDoc(doc(db, "studentAccounts", accId), newAcc);
+              successCount++;
+            }
+          }
+        }
+
+        toast.success(`Đã cấp thành công ${successCount} tài khoản học sinh từ file CSV!`);
+        if (event.target) event.target.value = "";
+      } catch (err) {
+        console.error(err);
+        toast.error("Lỗi khi đọc file CSV.");
+      }
+    };
+    reader.readAsText(file, "UTF-8");
+  };
 
   // Student Account creation modal state
   const [showStudentModal, setShowStudentModal] = useState(false);
@@ -109,6 +198,11 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [newStudentName, setNewStudentName] = useState("");
   const [newStudentClass, setNewStudentClass] = useState("");
   const [newStudentSchool, setNewStudentSchool] = useState("");
+
+  // Student Account reset password state
+  const [resetStudentAccount, setResetStudentAccount] = useState<StudentAccount | null>(null);
+  const [resetNewPassword, setResetNewPassword] = useState("123456");
+  const [resetRequireChange, setResetRequireChange] = useState(true);
 
   // Assign exam to folder modal
   const [assignExamModal, setAssignExamModal] = useState<Exam | null>(null);
@@ -129,14 +223,20 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     });
 
     // Listen for folders
-    const folderQuery = query(collection(db, "folders"));
+    let folderQuery = query(collection(db, "folders"));
+    if (userProfile.role !== "admin") {
+      folderQuery = query(collection(db, "folders"), where("teacherId", "==", userProfile.uid));
+    }
     const unsubscribeFolders = onSnapshot(folderQuery, (snapshot) => {
       const folderList = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Folder));
       setFolders(folderList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
     });
 
     // Listen for student accounts
-    const studentAccQuery = query(collection(db, "studentAccounts"));
+    let studentAccQuery = query(collection(db, "studentAccounts"));
+    if (userProfile.role !== "admin") {
+      studentAccQuery = query(collection(db, "studentAccounts"), where("teacherId", "==", userProfile.uid));
+    }
     const unsubscribeStudents = onSnapshot(studentAccQuery, (snapshot) => {
       const accList = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as StudentAccount));
       setStudentAccounts(accList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
@@ -178,12 +278,14 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
         id: folderId,
         name: newFolderName.trim(),
         grade: newFolderGrade.trim(),
+        parentId: newFolderParentId === "none" ? null : newFolderParentId,
         teacherId: userProfile?.uid || "",
         createdAt: new Date().toISOString()
       };
       await setDoc(doc(db, "folders", folderId), newFolder);
       toast.success("Đã tạo thư mục thành công!");
       setNewFolderName("");
+      setNewFolderParentId("none");
       setShowFolderModal(false);
     } catch (err) {
       console.error(err);
@@ -217,7 +319,8 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
         studentClass: newStudentClass.trim(),
         schoolName: newStudentSchool.trim(),
         teacherId: userProfile?.uid || "",
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        mustChangePassword: true
       };
       await setDoc(doc(db, "studentAccounts", accId), newAcc);
       toast.success(`Đã cấp tài khoản cho học sinh ${newStudentName} thành công!`);
@@ -241,6 +344,25 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     } catch (err) {
       console.error(err);
       toast.error("Lỗi khi xóa tài khoản.");
+    }
+  };
+
+  const handleConfirmResetPassword = async () => {
+    if (!resetStudentAccount) return;
+    if (!resetNewPassword.trim()) {
+      toast.error("Vui lòng nhập mật khẩu mới.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, "studentAccounts", resetStudentAccount.id), {
+        password: resetNewPassword.trim(),
+        mustChangePassword: resetRequireChange
+      });
+      toast.success(`Đã reset mật khẩu cho học sinh ${resetStudentAccount.fullName} (${resetStudentAccount.studentId}) thành công!`);
+      setResetStudentAccount(null);
+    } catch (err) {
+      console.error(err);
+      toast.error("Lỗi khi reset mật khẩu học sinh.");
     }
   };
 
@@ -606,63 +728,230 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
         </TabsContent>
 
         {/* --- FOLDERS TAB --- */}
-        <TabsContent value="folders" className="space-y-4">
-          <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-            <div className="flex items-center gap-2">
-              <FolderIcon className="w-5 h-5 text-blue-600" />
-              <h3 className="font-bold text-gray-800">Quản lý Thư mục chứa Đề thi</h3>
+        <TabsContent value="folders" className="space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <FolderIcon className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-gray-800">Quản lý Thư mục & Đề thi</h3>
+              </div>
+              {/* Breadcrumbs */}
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500 pt-1">
+                <button 
+                  onClick={() => setCurrentFolderParentId(null)}
+                  className={`hover:text-blue-600 font-semibold flex items-center gap-1 ${currentFolderParentId === null ? 'text-blue-600 font-bold' : ''}`}
+                >
+                  📁 Tất cả thư mục gốc
+                </button>
+                {getBreadcrumbs(currentFolderParentId).map((crumb, idx, arr) => (
+                  <React.Fragment key={crumb.id}>
+                    <span>/</span>
+                    <button 
+                      onClick={() => setCurrentFolderParentId(crumb.id)}
+                      className={`hover:text-blue-600 font-semibold ${idx === arr.length - 1 ? 'text-blue-600 font-bold' : ''}`}
+                    >
+                      {crumb.name}
+                    </button>
+                  </React.Fragment>
+                ))}
+              </div>
             </div>
-            <Button onClick={() => setShowFolderModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold gap-2 rounded-xl h-10">
-              <FolderPlus className="w-4 h-4" />
-              Tạo thư mục mới
-            </Button>
+            
+            <div className="flex items-center gap-2 flex-wrap">
+              {currentFolderParentId !== null && (
+                <>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50 font-semibold gap-1.5"
+                    onClick={() => setCurrentFolderParentId(null)}
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-blue-600" />
+                    Quay về thư mục gốc
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="rounded-xl border-gray-200"
+                    onClick={() => {
+                      const parentCrumb = folders.find(f => f.id === currentFolderParentId);
+                      setCurrentFolderParentId(parentCrumb?.parentId || null);
+                    }}
+                  >
+                    ← Quay lại thư mục cha
+                  </Button>
+                </>
+              )}
+              <Button 
+                onClick={() => {
+                  setNewFolderParentId(currentFolderParentId || "none");
+                  setShowFolderModal(true);
+                }} 
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold gap-2 rounded-xl h-10"
+              >
+                <FolderPlus className="w-4 h-4" />
+                {currentFolderParentId ? "Tạo thư mục con" : "Tạo thư mục mới"}
+              </Button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {folders.map(folder => {
-              const countExams = exams.filter(e => e.folderId === folder.id).length;
-              return (
-                <Card key={folder.id} className="border-none shadow-sm hover:shadow-md transition-all bg-white">
-                  <CardHeader className="pb-3">
-                    <div className="flex justify-between items-start">
-                      <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 font-bold">
-                        Khối {folder.grade || "Chung"}
-                      </Badge>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50" onClick={() => setDeleteData({ id: folder.id, type: 'folder' })}>
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    <CardTitle className="text-xl mt-2 flex items-center gap-2 text-blue-950">
-                      📁 {folder.name}
-                    </CardTitle>
-                    <CardDescription className="text-xs pt-1">
-                      {countExams} đề thi đang lưu trữ trong thư mục này
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="pt-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="w-full h-9 rounded-xl text-xs font-semibold border-blue-200 text-blue-700 hover:bg-blue-50"
-                      onClick={() => {
-                        setSelectedFolderId(folder.id);
-                        setActiveTab("exams");
-                      }}
-                    >
-                      Xem đề trong thư mục ({countExams})
-                    </Button>
-                  </CardContent>
-                </Card>
-              );
-            })}
-            {folders.length === 0 && (
-              <div className="col-span-full py-16 text-center bg-white rounded-2xl border-2 border-dashed border-gray-200">
-                <FolderIcon className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-600 font-medium">Chưa có thư mục nào được tạo.</p>
-                <p className="text-xs text-gray-400 mt-1">Tạo thư mục giúp phân loại đề thi theo khối lớp và môn học gọn gàng.</p>
+          {/* Sub-Folders Section */}
+          {currentLevelFolders.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-bold text-blue-950">
+                  <FolderIcon className="w-4.5 h-4.5 text-blue-600" />
+                  <span>Thư mục con ({currentLevelFolders.length})</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {currentLevelFolders.map(folder => {
+                  const countExams = exams.filter(e => e.folderId === folder.id).length;
+                  const subFoldersCount = folders.filter(f => f.parentId === folder.id).length;
+                  return (
+                    <Card key={folder.id} className="border border-blue-100 shadow-sm hover:shadow-md transition-all bg-white group hover:border-blue-300">
+                      <CardHeader className="pb-3">
+                        <div className="flex justify-between items-start">
+                          <div className="flex gap-1.5 flex-wrap">
+                            <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 font-bold">
+                              Khối {folder.grade || "Chung"}
+                            </Badge>
+                          </div>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50" onClick={() => setDeleteData({ id: folder.id, type: 'folder' })}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        <CardTitle 
+                          className="text-lg mt-2 flex items-center gap-2 text-blue-950 font-bold line-clamp-1 cursor-pointer hover:text-blue-600"
+                          onClick={() => setCurrentFolderParentId(folder.id)}
+                        >
+                          📁 {folder.name}
+                        </CardTitle>
+                        <CardDescription className="text-xs pt-1">
+                          {subFoldersCount} thư mục con • {countExams} đề thi
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-1">
+                        <Button 
+                          variant="default" 
+                          size="sm" 
+                          className="w-full h-9 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+                          onClick={() => setCurrentFolderParentId(folder.id)}
+                        >
+                          📁 Mở thư mục ({subFoldersCount} thư mục con, {countExams} đề)
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Files/Exams Section inside active folder */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-bold text-gray-800">
+                <FileText className="w-4.5 h-4.5 text-indigo-600" />
+                <span>
+                  Đề thi trong {currentFolderParentId === null ? "Thư mục gốc" : `thư mục "${folders.find(f => f.id === currentFolderParentId)?.name || ""}"`} ({currentLevelExams.length})
+                </span>
+              </div>
+            </div>
+
+            {currentLevelExams.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {currentLevelExams.map((exam) => {
+                  return (
+                    <Card key={exam.id} className="border border-gray-200 shadow-sm hover:shadow-md transition-all group bg-white">
+                      <CardHeader className="pb-3">
+                        <div className="flex justify-between items-start">
+                          <div className="flex flex-wrap gap-1.5">
+                            <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-100 border-none">
+                              {exam.subject}
+                            </Badge>
+                            <Badge 
+                              variant="outline" 
+                              className={`text-[10px] ${exam.status === 'published' ? 'border-green-200 text-green-600 bg-green-50' : 'border-amber-200 text-amber-600 bg-amber-50'}`}
+                            >
+                              {exam.status === 'published' ? 'Đã xuất bản' : 'Bản nháp'}
+                            </Badge>
+                          </div>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => setPreviewExam(exam)} title="Xem đề">
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50" onClick={() => { setAssignExamModal(exam); setTargetFolderId(exam.folderId || "none"); }} title="Chuyển vào thư mục">
+                              <FolderIcon className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-500 hover:text-amber-700 hover:bg-amber-50" onClick={() => onEdit?.(exam)} title="Chỉnh sửa">
+                              <Edit2 className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50" onClick={() => onDuplicate?.(exam)} title="Sao chép">
+                              <Copy className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => setDeleteData({ id: exam.id, type: 'exam' })} title="Xóa đề">
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <CardTitle className="text-lg mt-2 line-clamp-1">{exam.title}</CardTitle>
+                        <CardDescription className="flex items-center gap-2 text-xs">
+                          <span>Lớp {exam.grade}</span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {exam.timeLimit} phút</span>
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="pb-4 space-y-3">
+                        <div className="flex items-center justify-between bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 font-semibold uppercase">Mã đề thi</span>
+                            <code className="text-xs font-mono text-gray-700 font-bold">{exam.id}</code>
+                          </div>
+                          <Button variant="ghost" size="sm" className="h-8 px-2 text-gray-500 hover:text-blue-600" onClick={() => copyToClipboard(exam.id)}>
+                            {copiedId === exam.id ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                          </Button>
+                        </div>
+
+                        {exam.status === 'published' && (
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="w-full h-9 gap-1.5 text-xs text-blue-600 hover:text-white hover:bg-blue-600 border-blue-200 transition-all font-semibold rounded-xl"
+                            onClick={() => copyShareLink(exam.id)}
+                          >
+                            {copiedLinkId === exam.id ? (
+                              <>
+                                <Check className="w-4 h-4 text-green-500" />
+                                Đã sao chép link đề!
+                              </>
+                            ) : (
+                              <>
+                                <Share2 className="w-4 h-4" />
+                                Sao chép Link học sinh
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="py-8 text-center bg-white rounded-xl border border-dashed border-gray-200 text-gray-500 text-xs">
+                Chưa có đề thi nào nằm trực tiếp trong vị trí thư mục này.
               </div>
             )}
           </div>
+
+          {currentLevelFolders.length === 0 && currentLevelExams.length === 0 && (
+            <div className="py-16 text-center bg-white rounded-2xl border-2 border-dashed border-gray-200">
+              <FolderIcon className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-600 font-medium">Thư mục này hiện tại đang trống.</p>
+              <p className="text-xs text-gray-400 mt-1">Nhấn "Tạo thư mục con" hoặc gán đề thi vào thư mục này để bắt đầu.</p>
+            </div>
+          )}
         </TabsContent>
 
         {/* --- STUDENT ACCOUNTS TAB --- */}
@@ -677,10 +966,21 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 onChange={(e) => setStudentSearch(e.target.value)}
               />
             </div>
-            <Button onClick={() => setShowStudentModal(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-2 rounded-xl h-10">
-              <UserPlus className="w-4 h-4" />
-              Cấp tài khoản học sinh
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={handleDownloadCsvTemplate} variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 font-semibold gap-2 rounded-xl h-10">
+                <Download className="w-4 h-4" />
+                Tải file mẫu CSV
+              </Button>
+              <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-2 rounded-xl h-10 px-4 inline-flex items-center text-sm shadow-sm transition-all">
+                <FileUp className="w-4 h-4" />
+                Tải lên file CSV danh sách HS
+                <input type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />
+              </label>
+              <Button onClick={() => setShowStudentModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold gap-2 rounded-xl h-10">
+                <UserPlus className="w-4 h-4" />
+                Cấp tài khoản cá nhân
+              </Button>
+            </div>
           </div>
 
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
@@ -719,20 +1019,43 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="font-mono text-xs text-gray-600 bg-gray-100 px-2.5 py-1 rounded-lg w-fit">
-                          •••••••• ({st.password})
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="font-mono text-xs text-gray-700 bg-gray-100 px-2.5 py-1 rounded-lg w-fit">
+                            •••••••• ({st.password})
+                          </div>
+                          {st.mustChangePassword && (
+                            <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-300 font-medium">
+                              Cần đổi MK
+                            </Badge>
+                          )}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50"
-                          onClick={() => setDeleteData({ id: st.id, type: 'student' })}
-                          title="Xóa tài khoản"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <div className="flex justify-end gap-1.5">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-8 text-xs text-amber-700 border-amber-200 hover:bg-amber-50 gap-1.5 rounded-lg font-medium"
+                            onClick={() => {
+                              setResetStudentAccount(st);
+                              setResetNewPassword("123456");
+                              setResetRequireChange(true);
+                            }}
+                            title="Reset mật khẩu khi học sinh quên"
+                          >
+                            <Key className="w-3.5 h-3.5 text-amber-600" />
+                            Reset MK
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                            onClick={() => setDeleteData({ id: st.id, type: 'student' })}
+                            title="Xóa tài khoản"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -994,6 +1317,20 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
               />
             </div>
             <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-700">Thư mục cha (Tùy chọn - Hỗ trợ thư mục con)</label>
+              <Select value={newFolderParentId} onValueChange={setNewFolderParentId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="-- Thư mục gốc (Không có) --" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">-- Thư mục gốc (Không có) --</SelectItem>
+                  {folders.map(f => (
+                    <SelectItem key={f.id} value={f.id}>📁 {f.name} (Khối {f.grade || "N/A"})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
               <label className="text-xs font-bold text-gray-700">Khối lớp</label>
               <Select value={newFolderGrade} onValueChange={setNewFolderGrade}>
                 <SelectTrigger>
@@ -1135,6 +1472,167 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
               }}
             >
               Xác nhận xóa
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Preview Exam Modal */}
+      <Dialog open={!!previewExam} onOpenChange={(open) => !open && setPreviewExam(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl font-bold text-blue-900">
+              <FileText className="w-5 h-5 text-blue-600" />
+              {previewExam?.title}
+            </DialogTitle>
+            <DialogDescription className="flex flex-wrap items-center gap-2 pt-1">
+              <Badge variant="secondary" className="bg-blue-50 text-blue-700">Môn: {previewExam?.subject}</Badge>
+              <Badge variant="outline">Khối {previewExam?.grade}</Badge>
+              <Badge variant="outline" className="flex items-center gap-1">
+                <Clock className="w-3 h-3" /> {previewExam?.timeLimit} phút
+              </Badge>
+              <span className="text-xs text-gray-500 font-mono">Mã đề: {previewExam?.id}</span>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            {previewExam?.questions && previewExam.questions.length > 0 ? (
+              previewExam.questions.map((q, idx) => (
+                <div key={q.id || idx} className="p-4 bg-gray-50 rounded-xl border border-gray-200 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <Badge variant="outline" className="bg-blue-100 text-blue-800 font-bold border-blue-300">
+                      Câu {idx + 1} ({q.type}) — {q.points || 0.25} điểm
+                    </Badge>
+                    <Badge variant="secondary" className="text-[10px] uppercase">
+                      Mức độ: {q.level === 'know' ? 'Biết' : q.level === 'understand' ? 'Hiểu' : q.level === 'apply' ? 'Vận dụng' : 'Vận dụng cao'}
+                    </Badge>
+                  </div>
+
+                  {q.context && (
+                    <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-950">
+                      <strong className="block text-amber-800 mb-1">📖 Lời dẫn / Ngữ liệu:</strong>
+                      <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                        {q.context}
+                      </ReactMarkdown>
+                    </div>
+                  )}
+
+                  <div className="text-sm font-medium text-gray-900 leading-relaxed">
+                    <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                      {q.content}
+                    </ReactMarkdown>
+                  </div>
+
+                  {q.imageUrl && (
+                    <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border max-h-48 object-contain" />
+                  )}
+
+                  {q.options && (q.type === 'MC' || q.type === 'TF') && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+                      {q.options.map((opt, oIdx) => {
+                        const label = q.type === 'MC' ? opt.id : String.fromCharCode(97 + oIdx);
+                        return (
+                          <div 
+                            key={opt.id || oIdx} 
+                            className={`p-2.5 rounded-lg border text-xs flex items-start gap-2 ${
+                              opt.isCorrect ? 'bg-emerald-50 border-emerald-400 font-semibold text-emerald-950' : 'bg-white border-gray-200 text-gray-700'
+                            }`}
+                          >
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${opt.isCorrect ? 'bg-emerald-600 text-white' : 'bg-gray-100'}`}>
+                              {label}.
+                            </span>
+                            <div className="flex-1">
+                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                {opt.text}
+                              </ReactMarkdown>
+                            </div>
+                            {opt.isCorrect && <span className="text-[10px] text-emerald-700 font-bold">✓ Đáp án đúng</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {q.type === 'SA' && (
+                    <div className="text-xs p-2.5 bg-blue-50 rounded-lg border border-blue-200 text-blue-900 font-mono">
+                      <strong>Đáp án chính xác:</strong> {q.correctAnswer || '(Chưa có)'}
+                    </div>
+                  )}
+
+                  {q.explanation && (
+                    <div className="text-xs p-2.5 bg-amber-50 rounded-lg border border-amber-100 text-amber-900">
+                      <strong>Lời giải chi tiết:</strong> {q.explanation}
+                    </div>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-8 text-gray-500 text-sm">
+                Đề thi này chưa có danh sách câu hỏi chi tiết.
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="flex justify-between items-center sm:justify-between">
+            <div className="text-xs text-gray-500">
+              Tổng số câu hỏi: {previewExam?.questions?.length || 0}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setPreviewExam(null)}>Đóng</Button>
+              <Button 
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={() => {
+                  if (previewExam) {
+                    onEdit?.(previewExam);
+                    setPreviewExam(null);
+                  }
+                }}
+              >
+                <Edit2 className="w-4 h-4 mr-2" />
+                Chỉnh sửa đề này
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Student Password Dialog */}
+      <Dialog open={!!resetStudentAccount} onOpenChange={(open) => !open && setResetStudentAccount(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-800">
+              <Key className="w-5 h-5 text-amber-600" />
+              Reset Mật khẩu Học sinh
+            </DialogTitle>
+            <DialogDescription className="text-xs pt-1">
+              Học sinh: <strong className="text-gray-900">{resetStudentAccount?.fullName}</strong> ({resetStudentAccount?.studentId} - Lớp {resetStudentAccount?.studentClass})
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-700">Mật khẩu mới *</label>
+              <Input 
+                value={resetNewPassword}
+                onChange={(e) => setResetNewPassword(e.target.value)}
+                placeholder="Nhập mật khẩu mới (mặc định: 123456)..."
+                className="font-mono font-bold text-sm h-10"
+              />
+            </div>
+            <div className="flex items-center space-x-2 pt-1">
+              <Checkbox 
+                id="resetReq" 
+                checked={resetRequireChange}
+                onCheckedChange={(val) => setResetRequireChange(!!val)}
+              />
+              <label htmlFor="resetReq" className="text-xs font-medium text-gray-700 cursor-pointer">
+                Bắt buộc học sinh đổi mật khẩu trong lần đăng nhập kế tiếp
+              </label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetStudentAccount(null)}>Hủy bỏ</Button>
+            <Button onClick={handleConfirmResetPassword} className="bg-amber-600 hover:bg-amber-700 text-white font-bold">
+              Xác nhận Reset MK
             </Button>
           </DialogFooter>
         </DialogContent>

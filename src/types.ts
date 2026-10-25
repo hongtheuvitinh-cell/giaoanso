@@ -49,6 +49,7 @@ export interface Folder {
   id: string;
   name: string;
   grade?: string;
+  parentId?: string | null; // Thư mục cha (hỗ trợ thư mục con)
   teacherId: string;
   createdAt: string;
 }
@@ -62,6 +63,7 @@ export interface StudentAccount {
   schoolName?: string; // Trường
   teacherId: string;
   createdAt: string;
+  mustChangePassword?: boolean; // Yêu cầu đổi mật khẩu lần đầu/sau khi reset
 }
 
 export interface ExamResult {
