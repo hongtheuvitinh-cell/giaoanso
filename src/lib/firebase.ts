@@ -52,9 +52,19 @@ export interface FirestoreErrorInfo {
   }
 }
 
+import { toast } from "sonner";
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errStr = error instanceof Error ? error.message : String(error);
+  
+  if (errStr.includes("resource-exhausted") || errStr.includes("quota") || errStr.toLowerCase().includes("exceeded")) {
+    toast.error("⚠️ Hệ thống đã đạt giới hạn lượt truy cập trong ngày (Hết quota Firebase). Vui lòng quay lại sau!", {
+      duration: 10000,
+    });
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errStr,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,

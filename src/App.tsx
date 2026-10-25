@@ -439,23 +439,9 @@ export default function App() {
   };
 
   const handleEditExam = (exam: Exam) => {
-    if (exam.status === 'published') {
-      // If published, create a copy to prevent changing live data
-      const duplicatedExam: Exam = {
-        ...exam,
-        id: `exam_${Date.now()}_edit`,
-        title: `${exam.title} (Chỉnh sửa)`,
-        createdAt: new Date().toISOString(),
-        status: 'draft'
-      };
-      setExamData(duplicatedExam);
-      toast.info("Đề thi đã xuất bản. Hệ thống đã tạo một bản sao để bạn chỉnh sửa.");
-    } else {
-      // If draft, just load it for direct editing
-      setExamData(exam);
-      toast.success("Đang mở bản nháp để chỉnh sửa.");
-    }
+    setExamData(exam);
     setActiveTab("exam");
+    toast.success("Đang mở đề thi để chỉnh sửa.");
   };
 
   return (

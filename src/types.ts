@@ -42,6 +42,26 @@ export interface Exam {
   createdAt: string;
   teacherId: string;
   status?: 'draft' | 'published';
+  folderId?: string; // Thư mục chứa đề thi
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  grade?: string;
+  teacherId: string;
+  createdAt: string;
+}
+
+export interface StudentAccount {
+  id: string;
+  studentId: string; // Mã học sinh (Username)
+  password: string; // Mật khẩu
+  fullName: string; // Họ và tên
+  studentClass: string; // Lớp
+  schoolName?: string; // Trường
+  teacherId: string;
+  createdAt: string;
 }
 
 export interface ExamResult {
@@ -67,3 +87,4 @@ export const PHYSICS_COMPETENCIES = [
 ];
 
 export const EMPTY_LEVELS = { know: 0, understand: 0, apply: 0, highApply: 0 };
+

@@ -34,5 +34,15 @@ service cloud.firestore {
       allow read, delete: if isAuthenticated();
       allow update: if isAuthenticated();
     }
+
+    match /folders/{folderId} {
+      allow read: if true;
+      allow create, update, delete: if isAuthenticated();
+    }
+
+    match /studentAccounts/{studentAccId} {
+      allow read, list: if true;
+      allow create, update, delete: if isAuthenticated();
+    }
   }
 }

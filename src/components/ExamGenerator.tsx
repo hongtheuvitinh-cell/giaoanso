@@ -1024,8 +1024,10 @@ export default function ExamGenerator({
   };
 
   const [publishing, setPublishing] = useState(false);
+  const [showSaveChoiceDialog, setShowSaveChoiceDialog] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<'draft' | 'published'>('published');
 
-  const handlePublish = async (status: 'draft' | 'published' = 'published') => {
+  const handlePublish = (status: 'draft' | 'published' = 'published') => {
     if (!examData) return;
     
     if (!auth.currentUser) {
@@ -1035,28 +1037,39 @@ export default function ExamGenerator({
       return;
     }
 
+    if (examData.id && examData.id !== "new-exam") {
+      setPendingStatus(status);
+      setShowSaveChoiceDialog(true);
+    } else {
+      executePublish(status, true);
+    }
+  };
+
+  const executePublish = async (status: 'draft' | 'published', asNew: boolean) => {
+    if (!examData || !auth.currentUser) return;
+
     setPublishing(true);
-    // Sanitize document ID to avoid invalid characters or sub-collection paths
-    const rawId = examData.id && examData.id !== "new-exam" ? examData.id : `exam_${Date.now()}`;
+    setShowSaveChoiceDialog(false);
+
+    const rawId = asNew || !examData.id || examData.id === "new-exam" ? `exam_${Date.now()}` : examData.id;
     const examId = String(rawId).replace(/[^a-zA-Z0-9_-]/g, "_");
 
     try {
       const finalExam: Exam = {
         ...examData,
         id: examId,
-        createdAt: examData.createdAt || new Date().toISOString(),
+        createdAt: asNew || !examData.createdAt ? new Date().toISOString() : examData.createdAt,
         teacherId: auth.currentUser.uid,
         status: status
       };
 
-      // Strip any undefined fields before sending to Firestore
       const sanitizedExam = JSON.parse(JSON.stringify(finalExam));
       await setDoc(doc(db, "exams", examId), sanitizedExam);
       
       if (status === 'published') {
         const studentUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?code=${examId}`;
-        toast.success("Đã xuất bản đề thi thành công!", {
-          description: `Mã đề của bạn là: ${examId}. Hãy gửi mã hoặc gửi link trực tiếp này cho học sinh.`,
+        toast.success(asNew ? "Đã lưu thành bản mới và xuất bản thành công!" : "Đã cập nhật đề thi thành công!", {
+          description: `Mã đề: ${examId}. Hãy gửi link này cho học sinh.`,
           action: {
             label: "Sao chép Link HS",
             onClick: () => {
@@ -1067,7 +1080,7 @@ export default function ExamGenerator({
           duration: 12000,
         });
       } else {
-        toast.success("Đã lưu bản nháp đề thi thành công!");
+        toast.success(asNew ? "Đã lưu bản mới thành công!" : "Đã cập nhật bản nháp thành công!");
       }
       
       setExamData(finalExam);
@@ -1078,7 +1091,7 @@ export default function ExamGenerator({
       } catch (wrappedErr) {
         console.error("Wrapped Firestore Error:", wrappedErr);
       }
-      toast.error(`Lỗi khi ${status === 'published' ? 'xuất bản' : 'lưu'} đề thi: ${err?.message || "Vui lòng thử lại"}`);
+      toast.error(`Lỗi khi lưu đề thi: ${err?.message || "Vui lòng thử lại"}`);
     } finally {
       setPublishing(false);
     }
@@ -1614,6 +1627,46 @@ export default function ExamGenerator({
           </div>
         )}
       </div>
+
+      {/* Save Choice Dialog */}
+      <Dialog open={showSaveChoiceDialog} onOpenChange={setShowSaveChoiceDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-900 font-bold">
+              <Save className="w-5 h-5 text-blue-600" />
+              Tùy chọn lưu đề thi
+            </DialogTitle>
+            <DialogDescription className="py-2 text-gray-600 text-sm">
+              Đề thi này đã tồn tại trên hệ thống. Bạn muốn lưu cập nhật (ghi đè) hay lưu thành bản mới cho lần thi kế tiếp?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Button 
+              variant="outline" 
+              className="w-full justify-start h-auto p-4 border-blue-200 hover:bg-blue-50 text-left space-y-1"
+              onClick={() => executePublish(pendingStatus, false)}
+            >
+              <div>
+                <div className="font-bold text-blue-900">Lưu cập nhật trực tiếp</div>
+                <div className="text-xs text-gray-500 font-normal">Ghi đè lên đề thi hiện tại, giữ nguyên mã đề ({examData?.id}). Phù hợp khi sửa lỗi chính tả, chỉnh sửa nhỏ.</div>
+              </div>
+            </Button>
+            <Button 
+              variant="outline" 
+              className="w-full justify-start h-auto p-4 border-emerald-200 hover:bg-emerald-50 text-left space-y-1"
+              onClick={() => executePublish(pendingStatus, true)}
+            >
+              <div>
+                <div className="font-bold text-emerald-900">Lưu thành bản mới</div>
+                <div className="text-xs text-gray-500 font-normal">Tạo mã đề hoàn toàn mới cho lần thi kế tiếp hoặc lớp khác. Giữ nguyên đề cũ.</div>
+              </div>
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowSaveChoiceDialog(false)}>Hủy bỏ</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

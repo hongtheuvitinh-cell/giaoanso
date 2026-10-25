@@ -60,6 +60,35 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "role"]
+    },
+    "folder": {
+      "title": "Exam Folder",
+      "description": "Folder for organizing exams by grade or subject",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "grade": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "teacherId"]
+    },
+    "studentAccount": {
+      "title": "Student Account",
+      "description": "Student credentials for taking exams securely",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "password": { "type": "string" },
+        "fullName": { "type": "string" },
+        "studentClass": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "studentId", "password", "fullName", "studentClass"]
     }
   },
   "firestore": {
@@ -78,6 +107,14 @@
     "users/{uid}": {
       "schema": "user",
       "description": "User profiles and roles"
+    },
+    "folders/{folderId}": {
+      "schema": "folder",
+      "description": "Collection of exam folders"
+    },
+    "studentAccounts/{studentAccId}": {
+      "schema": "studentAccount",
+      "description": "Collection of student accounts for login authentication"
     }
   }
 }
