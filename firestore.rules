@@ -42,7 +42,13 @@ service cloud.firestore {
 
     match /studentAccounts/{studentAccId} {
       allow read, list: if true;
-      allow create, update, delete: if isAuthenticated();
+      allow create, delete: if isAuthenticated();
+      allow update: if isAuthenticated() || (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['password', 'mustChangePassword']) &&
+        request.resource.data.password is string &&
+        request.resource.data.password.size() >= 4 &&
+        request.resource.data.mustChangePassword is bool
+      );
     }
   }
 }
