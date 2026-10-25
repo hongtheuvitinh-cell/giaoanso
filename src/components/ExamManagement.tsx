@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   FileText, 
   Users, 
@@ -27,9 +27,12 @@ import {
   Folder as FolderIcon,
   FolderPlus,
   Lock,
-  Key
+  Key,
+  BookOpen,
+  CheckCircle2,
+  RefreshCw
 } from "lucide-react";
-import { db, collection, onSnapshot, query, where, doc, deleteDoc, updateDoc, setDoc, auth, getDocs } from "@/lib/firebase";
+import { db, collection, onSnapshot, query, where, doc, getDoc, deleteDoc, updateDoc, setDoc, auth, getDocs } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -99,6 +102,77 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
   const [viewResult, setViewResult] = useState<ExamResult | null>(null);
   const [deleteData, setDeleteData] = useState<{ id: string, type: 'exam' | 'result' | 'folder' | 'student' | 'user' } | null>(null);
+
+  // Full Exam Review state for Result Modal
+  const [reviewExamData, setReviewExamData] = useState<Exam | null>(null);
+  const [loadingReviewExam, setLoadingReviewExam] = useState(false);
+  const [showFullReview, setShowFullReview] = useState(false);
+
+  const formatStudentAnswer = (ansVal: any) => {
+    if (ansVal === null || ansVal === undefined || ansVal === "") {
+      return "(Chưa làm)";
+    }
+    if (typeof ansVal === "object") {
+      const keys = Object.keys(ansVal).sort();
+      if (keys.length === 0) return "(Chưa chọn)";
+      const parts = keys.map((key) => {
+        const match = key.match(/\d+/);
+        const idx = match ? parseInt(match[0], 10) : 0;
+        const label = String.fromCharCode(97 + idx);
+        const val = ansVal[key];
+        const valStr = val === true ? "Đúng" : val === false ? "Sai" : "-";
+        return `${label}: ${valStr}`;
+      });
+      return parts.join(" | ");
+    }
+    return String(ansVal);
+  };
+
+  // In-memory exam cache to guarantee 0 extra reads on repeat views
+  const examCacheRef = useRef<Record<string, Exam>>({});
+
+  const handleLoadFullExamReview = async () => {
+    if (!viewResult) return;
+    const targetExamId = viewResult.examId;
+
+    // 1. Check if exam is already loaded in local `exams` list
+    const existingInList = exams.find(e => e.id === targetExamId);
+    if (existingInList) {
+      setReviewExamData(existingInList);
+      setShowFullReview(true);
+      toast.success("Đã nạp bài làm từ Bộ nhớ đệm (Cache) - 0 lượt đọc máy chủ!");
+      return;
+    }
+
+    // 2. Check if exam was previously cached in memory
+    if (examCacheRef.current[targetExamId]) {
+      setReviewExamData(examCacheRef.current[targetExamId]);
+      setShowFullReview(true);
+      toast.success("Đã nạp bài làm từ Bộ nhớ đệm (Cache) - 0 lượt đọc máy chủ!");
+      return;
+    }
+
+    // 3. Fallback: Fetch once from Firestore and cache for future uses
+    setLoadingReviewExam(true);
+    try {
+      const docRef = doc(db, "exams", targetExamId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const examObj = docSnap.data() as Exam;
+        examCacheRef.current[targetExamId] = examObj; // Cache for next time
+        setReviewExamData(examObj);
+        setShowFullReview(true);
+        toast.success("Đã nạp thành công chi tiết đề thi và công thức!");
+      } else {
+        toast.error("Không tìm thấy dữ liệu đề thi gốc trong hệ thống.");
+      }
+    } catch (err) {
+      console.error("Lỗi nạp đề thi:", err);
+      toast.error("Không thể nạp chi tiết đề thi.");
+    } finally {
+      setLoadingReviewExam(false);
+    }
+  };
 
   // Pagination states (12-15 items per page)
   const [examsPage, setExamsPage] = useState(1);
@@ -1664,12 +1738,20 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
       </Dialog>
 
       {/* View Result Details Modal */}
-      <Dialog open={!!viewResult} onOpenChange={(open) => !open && setViewResult(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <Dialog open={!!viewResult} onOpenChange={(open) => {
+        if (!open) {
+          setViewResult(null);
+          setShowFullReview(false);
+          setReviewExamData(null);
+        }
+      }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl font-bold text-blue-900">
-              <Trophy className="w-5 h-5 text-amber-500" />
-              Chi tiết kết quả bài thi
+            <DialogTitle className="flex items-center justify-between gap-2 text-xl font-bold text-blue-900 pr-6">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-amber-500" />
+                <span>Chi tiết kết quả bài thi</span>
+              </div>
             </DialogTitle>
             <DialogDescription className="text-xs pt-1">
               Học sinh: <strong className="text-gray-900">{viewResult?.studentName}</strong> (Lớp {viewResult?.studentClass} {viewResult?.schoolName ? `- ${viewResult.schoolName}` : ''})
@@ -1677,8 +1759,8 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
           </DialogHeader>
 
           {viewResult && (
-            <div className="space-y-4 py-2">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
+            <div className="space-y-5 py-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gray-50 p-3.5 rounded-xl border border-gray-200">
                 <div>
                   <span className="text-[10px] text-gray-500 font-bold uppercase block">Môn / Đề thi</span>
                   <span className="text-sm font-bold text-gray-900 line-clamp-1">{viewResult.examTitle}</span>
@@ -1697,19 +1779,177 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 </div>
               </div>
 
-              {viewResult.answers && Object.keys(viewResult.answers).length > 0 && (
-                <div className="space-y-2 pt-2">
-                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Đáp án đã chọn:</h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {Object.entries(viewResult.answers).map(([qId, ansVal], idx) => (
-                      <div key={qId} className="p-2 bg-white rounded-lg border border-gray-200 text-xs flex justify-between items-center">
-                        <span className="font-semibold text-gray-600">Câu {idx + 1}:</span>
-                        <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded font-mono">
-                          {typeof ansVal === 'object' ? JSON.stringify(ansVal) : String(ansVal)}
-                        </span>
-                      </div>
-                    ))}
+              {/* Toggle Action to Load Full Exam & Math Formulas */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-blue-50/80 p-3 rounded-xl border border-blue-200">
+                <div className="text-xs text-blue-900">
+                  <span className="font-bold block">💡 Chế độ xem tiết kiệm lượt đọc:</span>
+                  <span className="text-blue-700">Bảng tóm tắt bên dưới không tốn thêm lượt đọc. Bạn có thể nạp đầy đủ đề thi và công thức Toán/Lý/Hóa bên dưới khi cần.</span>
+                </div>
+                <Button 
+                  size="sm" 
+                  variant={showFullReview ? "outline" : "default"}
+                  className={`shrink-0 rounded-xl text-xs font-bold gap-1.5 h-9 ${showFullReview ? 'border-blue-300 text-blue-800' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+                  onClick={() => {
+                    if (showFullReview) {
+                      setShowFullReview(false);
+                    } else if (reviewExamData) {
+                      setShowFullReview(true);
+                    } else {
+                      handleLoadFullExamReview();
+                    }
+                  }}
+                  disabled={loadingReviewExam}
+                >
+                  {loadingReviewExam ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      Đang nạp đề thi...
+                    </>
+                  ) : showFullReview ? (
+                    <>
+                      <Eye className="w-3.5 h-3.5" />
+                      Thu gọn bài làm
+                    </>
+                  ) : (
+                    <>
+                      <BookOpen className="w-3.5 h-3.5" />
+                      Xem đầy đủ đề & công thức
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {/* Clean Summary Grid for Student Answers */}
+              {viewResult.answers && Object.keys(viewResult.answers).length > 0 && !showFullReview && (
+                <div className="space-y-2 pt-1">
+                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Bảng đáp án học sinh đã chọn:</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-[320px] overflow-y-auto p-1">
+                    {Object.entries(viewResult.answers).map(([qId, ansVal], idx) => {
+                      const formattedVal = formatStudentAnswer(ansVal);
+                      return (
+                        <div key={qId} className="p-2.5 bg-white rounded-xl border border-gray-200 text-xs flex justify-between items-center gap-2 shadow-xs hover:border-blue-200">
+                          <span className="font-bold text-gray-600 shrink-0">Câu {idx + 1}:</span>
+                          <span className="font-bold text-blue-700 bg-blue-50 px-2 py-1 rounded-lg border border-blue-100 max-w-[180px] truncate text-right font-mono">
+                            {formattedVal}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
+                </div>
+              )}
+
+              {/* Full Exam Review Mode with KaTeX Math Formulas */}
+              {showFullReview && reviewExamData && (
+                <div className="space-y-6 pt-2 border-t border-gray-200">
+                  <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wide flex items-center gap-2 text-blue-900">
+                    <BookOpen className="w-4 h-4 text-blue-600" />
+                    <span>Chi tiết từng câu hỏi & đáp án (Đã công thức hóa)</span>
+                  </h4>
+
+                  {reviewExamData.questions.map((q, idx) => {
+                    const studentAns = viewResult.answers?.[q.id];
+                    let isCorrect = false;
+                    if (q.type === "MC") {
+                      isCorrect = studentAns === q.options?.find(o => o.isCorrect)?.id;
+                    } else if (q.type === "TF") {
+                      isCorrect = q.options?.every((opt, i) => (studentAns?.[`opt_${i}`] ?? null) === opt.isCorrect) ?? false;
+                    } else if (q.type === "SA") {
+                      isCorrect = studentAns?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase();
+                    }
+
+                    return (
+                      <div key={q.id || idx} className={`p-4 rounded-xl border-2 space-y-3 bg-white ${isCorrect ? 'border-emerald-200 shadow-xs' : 'border-rose-200 shadow-xs'}`}>
+                        <div className="flex justify-between items-center">
+                          <Badge variant="outline" className={isCorrect ? "bg-emerald-50 text-emerald-800 border-emerald-300 font-bold" : "bg-rose-50 text-rose-800 border-rose-300 font-bold"}>
+                            Câu {idx + 1} ({q.type}) — {isCorrect ? "✓ Đúng" : "✗ Sai"}
+                          </Badge>
+                          <span className="text-xs font-bold text-gray-500">Mức độ: {q.level || "biết"}</span>
+                        </div>
+
+                        {q.context && (
+                          <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-950">
+                            <strong className="block text-amber-800 mb-1">📖 Ngữ liệu chung:</strong>
+                            <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                              {q.context}
+                            </ReactMarkdown>
+                          </div>
+                        )}
+
+                        <div className="text-sm font-medium text-gray-900 leading-relaxed">
+                          <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                            {q.content}
+                          </ReactMarkdown>
+                        </div>
+
+                        {q.imageUrl && (
+                          <img src={q.imageUrl} alt="Minh họa" className="rounded-lg border max-h-40 object-contain" />
+                        )}
+
+                        {/* Question options or answer details */}
+                        {q.type === "MC" && q.options && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+                            {q.options.map((opt) => {
+                              const isStudentChoice = studentAns === opt.id;
+                              const isCorrectOpt = opt.isCorrect;
+                              return (
+                                <div key={opt.id} className={`p-2.5 rounded-lg border text-xs flex items-start gap-2 ${
+                                  isCorrectOpt ? 'bg-emerald-50 border-emerald-400 font-semibold text-emerald-950' : isStudentChoice ? 'bg-blue-50 border-blue-400 font-semibold text-blue-950' : 'bg-white border-gray-200 text-gray-700'
+                                }`}>
+                                  <span className="font-bold shrink-0">{opt.id}.</span>
+                                  <div className="flex-1">
+                                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                      {opt.text}
+                                    </ReactMarkdown>
+                                  </div>
+                                  {isCorrectOpt && <span className="text-[10px] text-emerald-700 font-bold shrink-0">✓ Đáp án đúng</span>}
+                                  {!isCorrectOpt && isStudentChoice && <span className="text-[10px] text-blue-700 font-bold shrink-0">Lựa chọn của HS</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {q.type === "TF" && q.options && (
+                          <div className="space-y-1.5 pt-1">
+                            {q.options.map((opt, oIdx) => {
+                              const studentVal = studentAns?.[`opt_${oIdx}`];
+                              const isSubCorrect = studentVal === opt.isCorrect;
+                              return (
+                                <div key={opt.id} className={`p-2 rounded-lg border text-xs flex justify-between items-center ${isSubCorrect ? 'bg-emerald-50/60 border-emerald-200' : 'bg-rose-50/60 border-rose-200'}`}>
+                                  <span className="font-medium text-gray-800">{String.fromCharCode(97 + oIdx)}). {opt.text}</span>
+                                  <div className="flex gap-2 text-[11px] font-bold shrink-0">
+                                    <span className="text-gray-600">HS chọn: <strong className={studentVal === true ? "text-blue-700" : studentVal === false ? "text-red-700" : "text-gray-400"}>{studentVal === true ? "Đúng" : studentVal === false ? "Sai" : "Chưa chọn"}</strong></span>
+                                    <span>|</span>
+                                    <span className="text-emerald-700">Đáp án: {opt.isCorrect ? "Đúng" : "Sai"}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {q.type === "SA" && (
+                          <div className="text-xs p-2.5 bg-blue-50 rounded-lg border border-blue-200 text-blue-900 space-y-1">
+                            <div><strong>HS trả lời:</strong> <code className="font-bold">{studentAns || "(Chưa nhập)"}</code></div>
+                            <div><strong>Đáp án đúng:</strong> <code className="font-bold text-emerald-700">{q.correctAnswer}</code></div>
+                          </div>
+                        )}
+
+                        {q.explanation && (
+                          <div className="text-xs p-2.5 bg-amber-50 rounded-lg border border-amber-100 text-amber-900">
+                            <strong>Lời giải chi tiết:</strong>
+                            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                              {q.explanation}
+                            </ReactMarkdown>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1724,13 +1964,19 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 if (viewResult) {
                   setDeleteData({ id: viewResult.id, type: 'result' });
                   setViewResult(null);
+                  setShowFullReview(false);
+                  setReviewExamData(null);
                 }
               }}
             >
               <Trash2 className="w-4 h-4" />
               Xóa kết quả này
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setViewResult(null)}>Đóng</Button>
+            <Button variant="outline" size="sm" onClick={() => {
+              setViewResult(null);
+              setShowFullReview(false);
+              setReviewExamData(null);
+            }}>Đóng</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1818,8 +2064,13 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                   )}
 
                   {q.explanation && (
-                    <div className="text-xs p-2.5 bg-amber-50 rounded-lg border border-amber-100 text-amber-900">
-                      <strong>Lời giải chi tiết:</strong> {q.explanation}
+                    <div className="text-xs p-2.5 bg-amber-50 rounded-lg border border-amber-100 text-amber-950">
+                      <strong className="block text-amber-800 mb-1">📖 Lời giải chi tiết:</strong>
+                      <div className="prose prose-xs max-w-none text-amber-950">
+                        <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+                          {q.explanation}
+                        </ReactMarkdown>
+                      </div>
                     </div>
                   )}
                 </div>
