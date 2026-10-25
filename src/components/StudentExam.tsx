@@ -15,7 +15,8 @@ import {
   GraduationCap,
   School,
   Lock,
-  FileText
+  FileText,
+  Eye
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -63,6 +64,109 @@ export default function StudentExam() {
   const [newPassInput, setNewPassInput] = useState("");
   const [confirmPassInput, setConfirmPassInput] = useState("");
 
+  // Student Portal & History state
+  const [loggedInAccount, setLoggedInAccount] = useState<any>(null);
+  const [studentHistoryResults, setStudentHistoryResults] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [selectedReviewResult, setSelectedReviewResult] = useState<any | null>(null);
+  const [reviewExamData, setReviewExamData] = useState<Exam | null>(null);
+  const [loadingReview, setLoadingReview] = useState(false);
+
+  const fetchStudentHistory = async (acc: any) => {
+    if (!acc || !acc.fullName) return;
+    setLoadingHistory(true);
+    try {
+      const q = query(collection(db, "results"), where("studentName", "==", acc.fullName));
+      const snapshot = await getDocs(q);
+      const list: any[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ ...docSnap.data(), id: docSnap.id });
+      });
+      list.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+      setStudentHistoryResults(list);
+    } catch (err) {
+      console.error("Lỗi tải lịch sử bài thi:", err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    if (loggedInAccount) {
+      fetchStudentHistory(loggedInAccount);
+    } else {
+      setStudentHistoryResults([]);
+    }
+  }, [loggedInAccount]);
+
+  const handlePortalLogin = async () => {
+    if (!loginStudentId.trim()) {
+      toast.error("Vui lòng nhập Mã học sinh.");
+      return;
+    }
+    if (!loginPassword.trim()) {
+      toast.error("Vui lòng nhập Mật khẩu.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const q = query(collection(db, "studentAccounts"), where("studentId", "==", loginStudentId.trim()));
+      const snapshot = await getDocs(q);
+      let matchedAccount: any = null;
+      let matchedDocId = "";
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.password === loginPassword.trim()) {
+          matchedAccount = data;
+          matchedDocId = docSnap.id;
+        }
+      });
+
+      if (matchedAccount) {
+        if (matchedAccount.mustChangePassword) {
+          setPendingStudentAccount({ ...matchedAccount, docId: matchedDocId });
+          setNewPassInput("");
+          setConfirmPassInput("");
+          setShowPasswordChangeModal(true);
+        } else {
+          setLoggedInAccount(matchedAccount);
+          setStudentName(matchedAccount.fullName);
+          setStudentClass(matchedAccount.studentClass);
+          setSchoolName(matchedAccount.schoolName || "");
+          toast.success(`Đăng nhập thành công! Chào em ${matchedAccount.fullName}`);
+        }
+      } else {
+        toast.error("Mã học sinh hoặc Mật khẩu không chính xác!");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Lỗi khi xác thực tài khoản học sinh.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenReviewModal = async (resultItem: any) => {
+    setSelectedReviewResult(resultItem);
+    setLoadingReview(true);
+    setReviewExamData(null);
+    try {
+      const docRef = doc(db, "exams", resultItem.examId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setReviewExamData(docSnap.data() as Exam);
+      } else {
+        toast.error("Không tìm thấy dữ liệu đề thi gốc.");
+      }
+    } catch (err) {
+      console.error("Lỗi nạp đề thi xem lại:", err);
+      toast.error("Không thể nạp chi tiết đề thi.");
+    } finally {
+      setLoadingReview(false);
+    }
+  };
+
   const fetchExam = async (codeOverride?: string) => {
     const code = (codeOverride || examCode).trim();
     if (!code) {
@@ -107,6 +211,28 @@ export default function StudentExam() {
     }
   }, []);
 
+  const checkAlreadyTakenAndStart = async (studentAcc: any, currentExam: Exam) => {
+    if (!currentExam || !studentAcc) return true;
+    try {
+      const qResult = query(
+        collection(db, "results"),
+        where("examId", "==", currentExam.id),
+        where("studentName", "==", studentAcc.fullName)
+      );
+      const resSnapshot = await getDocs(qResult);
+      if (!resSnapshot.empty) {
+        const pastRes = { ...resSnapshot.docs[0].data(), id: resSnapshot.docs[0].id };
+        toast.info(`Em đã hoàn thành bài thi "${currentExam.title}" trước đó! Hệ thống sẽ mở phần xem lại thay vì làm lại.`);
+        handleOpenReviewModal(pastRes);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error("Lỗi kiểm tra bài làm cũ:", err);
+      return true;
+    }
+  };
+
   const verifyStudentAndStart = async () => {
     if (!loginStudentId.trim()) {
       toast.error("Vui lòng nhập Mã học sinh.");
@@ -138,11 +264,20 @@ export default function StudentExam() {
           setConfirmPassInput("");
           setShowPasswordChangeModal(true);
         } else {
+          setLoggedInAccount(matchedAccount);
           setStudentName(matchedAccount.fullName);
           setStudentClass(matchedAccount.studentClass);
           setSchoolName(matchedAccount.schoolName || "");
-          setStarted(true);
-          toast.success(`Đăng nhập thành công! Chào em ${matchedAccount.fullName}`);
+          
+          if (exam) {
+            const canStart = await checkAlreadyTakenAndStart(matchedAccount, exam);
+            if (canStart) {
+              setStarted(true);
+              toast.success(`Đăng nhập thành công! Bắt đầu làm bài thi: ${exam.title}`);
+            }
+          } else {
+            toast.success(`Đăng nhập thành công! Chào em ${matchedAccount.fullName}`);
+          }
         }
       } else {
         toast.error("Mã học sinh hoặc Mật khẩu không chính xác!");
@@ -181,6 +316,8 @@ export default function StudentExam() {
         mustChangePassword: false
       });
 
+      const updatedAccount = { ...pendingStudentAccount, password: newPassInput.trim(), mustChangePassword: false };
+      setLoggedInAccount(updatedAccount);
       setStudentName(pendingStudentAccount.fullName);
       setStudentClass(pendingStudentAccount.studentClass);
       setSchoolName(pendingStudentAccount.schoolName || "");
@@ -772,88 +909,308 @@ export default function StudentExam() {
   }
 
   return (
-    <div className="max-w-md mx-auto py-12">
+    <div className="max-w-6xl mx-auto py-8 px-4">
       <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}>
-        <Card className="border-none shadow-xl overflow-hidden">
-          <div className="bg-blue-600 p-8 text-center text-white">
-            <GraduationCap className="w-12 h-12 mx-auto mb-4 opacity-90" />
-            <h2 className="text-2xl font-bold">Khu vực Học sinh</h2>
-            <p className="text-blue-100 text-sm mt-2">Nhập mã đề thi & tài khoản để làm bài</p>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* LEFT COLUMN: Exam Selection & Start Card */}
+          <div className="lg:col-span-5 space-y-6">
+            <Card className="border-none shadow-xl overflow-hidden bg-white">
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-6 text-center text-white">
+                <GraduationCap className="w-10 h-10 mx-auto mb-2 opacity-90" />
+                <h2 className="text-2xl font-bold">Khu vực Học sinh</h2>
+                <p className="text-blue-100 text-xs mt-1">Nhập mã đề thi & tài khoản để làm bài</p>
+              </div>
+              <CardContent className="p-6 space-y-6">
+                {!exam ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="font-bold text-gray-700 text-sm">Mã đề thi *</Label>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-3.5 w-4 h-4 text-gray-400" />
+                        <Input 
+                          placeholder="Ví dụ: exam_17129..." 
+                          className="pl-10 h-12 rounded-xl font-mono font-bold"
+                          value={examCode}
+                          onChange={(e) => setExamCode(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <Button className="w-full bg-blue-600 hover:bg-blue-700 h-12 rounded-xl font-bold text-base shadow-md shadow-blue-200" onClick={() => fetchExam()} disabled={loading}>
+                      {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Tìm kiếm đề thi"}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                      <h3 className="font-bold text-blue-900 text-base">{exam.title}</h3>
+                      <div className="flex gap-4 mt-2 text-xs text-blue-700 font-medium">
+                        <span className="flex items-center gap-1"><BookOpen className="w-3.5 h-3.5" /> {exam.subject}</span>
+                        <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {exam.timeLimit} phút</span>
+                        <span className="flex items-center gap-1"><FileText className="w-3.5 h-3.5" /> {exam.questions.length} câu</span>
+                      </div>
+                    </div>
+
+                    {loggedInAccount ? (
+                      <div className="space-y-4 pt-2">
+                        <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-200 text-emerald-900 text-xs space-y-1">
+                          <p className="font-bold text-sm text-emerald-950 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            Đã xác thực tài khoản học sinh
+                          </p>
+                          <p>Họ tên: <strong>{loggedInAccount.fullName}</strong></p>
+                          <p>Mã HS: <code className="font-mono font-bold">{loggedInAccount.studentId}</code> | Lớp: <strong>{loggedInAccount.studentClass}</strong></p>
+                        </div>
+                        <Button 
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 h-12 rounded-xl font-bold text-base shadow-lg shadow-emerald-200"
+                          disabled={loading}
+                          onClick={async () => {
+                            if (!exam || !loggedInAccount) return;
+                            setLoading(true);
+                            const canStart = await checkAlreadyTakenAndStart(loggedInAccount, exam);
+                            if (canStart) {
+                              setStudentName(loggedInAccount.fullName);
+                              setStudentClass(loggedInAccount.studentClass);
+                              setSchoolName(loggedInAccount.schoolName || "");
+                              setStarted(true);
+                              toast.success(`Bắt đầu làm bài thi: ${exam.title}`);
+                            }
+                            setLoading(false);
+                          }}
+                        >
+                          {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "🚀 Bắt đầu làm bài thi ngay"}
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 pt-2">
+                        <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-xs font-medium">
+                          🔒 <span className="font-bold">Đăng nhập tài khoản học sinh:</span> Vui lòng nhập Mã học sinh và Mật khẩu.
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-700">Mã học sinh (Mã HS) *</Label>
+                          <div className="relative">
+                            <User className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                            <Input 
+                              placeholder="Ví dụ: HS1201..." 
+                              className="pl-10 h-11 rounded-xl font-mono font-bold"
+                              value={loginStudentId}
+                              onChange={(e) => setLoginStudentId(e.target.value)}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-700">Mật khẩu *</Label>
+                          <div className="relative">
+                            <Lock className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                            <Input 
+                              type="password"
+                              placeholder="Nhập mật khẩu..." 
+                              className="pl-10 h-11 rounded-xl font-medium"
+                              value={loginPassword}
+                              onChange={(e) => setLoginPassword(e.target.value)}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-3 pt-2">
+                          <Button variant="outline" className="flex-1 h-12 rounded-xl font-medium" onClick={() => setExam(null)}>Quay lại</Button>
+                          <Button className="flex-[2] bg-emerald-600 hover:bg-emerald-700 h-12 rounded-xl font-bold shadow-lg shadow-emerald-200" onClick={verifyStudentAndStart} disabled={loading}>
+                            {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Xác thực & Bắt đầu"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
-          <CardContent className="p-8 space-y-6">
-            {!exam ? (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label className="font-bold text-gray-700">Mã đề thi</Label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-3.5 w-4 h-4 text-gray-400" />
-                    <Input 
-                      placeholder="Ví dụ: exam_17129..." 
-                      className="pl-10 h-12 rounded-xl font-medium"
-                      value={examCode}
-                      onChange={(e) => setExamCode(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <Button className="w-full bg-blue-600 hover:bg-blue-700 h-12 rounded-xl font-bold text-base shadow-md shadow-blue-200" onClick={() => fetchExam()} disabled={loading}>
-                  {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Tìm kiếm đề thi"}
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
-                  <h3 className="font-bold text-blue-900 text-base">{exam.title}</h3>
-                  <div className="flex gap-4 mt-2 text-xs text-blue-700 font-medium">
-                    <span className="flex items-center gap-1"><BookOpen className="w-3.5 h-3.5" /> {exam.subject}</span>
-                    <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {exam.timeLimit} phút</span>
-                    <span className="flex items-center gap-1"><FileText className="w-3.5 h-3.5" /> {exam.questions.length} câu</span>
-                  </div>
-                </div>
 
-                <div className="space-y-4 pt-2">
-                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-xs font-medium">
-                    🔒 <span className="font-bold">Đăng nhập tài khoản học sinh:</span> Vui lòng nhập Mã học sinh và Mật khẩu được nhà trường cấp để làm bài.
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-gray-700">Mã học sinh (Mã HS) *</Label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
-                      <Input 
-                        placeholder="Ví dụ: HS1201..." 
-                        className="pl-10 h-11 rounded-xl font-mono font-bold"
-                        value={loginStudentId}
-                        onChange={(e) => setLoginStudentId(e.target.value)}
-                      />
+          {/* RIGHT COLUMN: Student Basic Info & Completed Exam History */}
+          <div className="lg:col-span-7 space-y-6">
+            <Card className="border-none shadow-xl overflow-hidden bg-white">
+              <CardHeader className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-6">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2.5">
+                    <User className="w-6 h-6 text-indigo-400 shrink-0" />
+                    <div>
+                      <CardTitle className="text-xl font-bold">Thông tin Học sinh & Đề thi đã làm</CardTitle>
+                      <CardDescription className="text-indigo-200 text-xs">Cổng tra cứu thông tin và lịch sử thi cá nhân</CardDescription>
                     </div>
                   </div>
+                  {loggedInAccount && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="text-xs text-rose-300 hover:text-white hover:bg-rose-900/50 rounded-xl"
+                      onClick={() => {
+                        setLoggedInAccount(null);
+                        setStudentHistoryResults([]);
+                        toast.info("Đã đăng xuất tài khoản học sinh.");
+                      }}
+                    >
+                      Đăng xuất
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-gray-700">Mật khẩu *</Label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
-                      <Input 
-                        type="password"
-                        placeholder="Nhập mật khẩu..." 
-                        className="pl-10 h-11 rounded-xl font-medium"
-                        value={loginPassword}
-                        onChange={(e) => setLoginPassword(e.target.value)}
-                      />
+              <CardContent className="p-6 space-y-6">
+                {/* TOP BOX: Student Login or Basic Info */}
+                {!loggedInAccount ? (
+                  <div className="p-5 bg-indigo-50/70 rounded-2xl border border-indigo-100 space-y-4">
+                    <div className="flex items-center gap-2 text-indigo-950 font-bold text-sm">
+                      <Lock className="w-4 h-4 text-indigo-600" />
+                      <span>Đăng nhập Cổng Học sinh</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs font-bold text-gray-700">Mã học sinh (Mã HS)</Label>
+                        <Input 
+                          placeholder="Mã HS (HS1201...)" 
+                          value={loginStudentId}
+                          onChange={(e) => setLoginStudentId(e.target.value)}
+                          className="h-10 rounded-xl font-mono font-bold text-sm bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs font-bold text-gray-700">Mật khẩu</Label>
+                        <Input 
+                          type="password"
+                          placeholder="Mật khẩu..." 
+                          value={loginPassword}
+                          onChange={(e) => setLoginPassword(e.target.value)}
+                          className="h-10 rounded-xl text-sm bg-white"
+                        />
+                      </div>
+                    </div>
+                    <Button 
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold h-10 rounded-xl text-sm shadow-md shadow-indigo-100"
+                      onClick={handlePortalLogin}
+                      disabled={loading}
+                    >
+                      {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Đăng nhập tra cứu lịch sử"}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="p-5 bg-gradient-to-r from-blue-50/80 via-indigo-50/60 to-purple-50/40 rounded-2xl border border-indigo-100 shadow-xs space-y-3">
+                    <div className="flex items-center gap-2 text-indigo-950 font-bold text-sm border-b pb-2 border-indigo-100">
+                      <GraduationCap className="w-4.5 h-4.5 text-blue-600" />
+                      <span>Thông tin cá nhân Học sinh</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                      <div className="bg-white p-3 rounded-xl border border-indigo-50 shadow-xs">
+                        <span className="text-gray-400 font-semibold uppercase text-[10px] block">Mã HS</span>
+                        <span className="font-mono font-bold text-indigo-950 text-sm">{loggedInAccount.studentId}</span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-indigo-50 shadow-xs">
+                        <span className="text-gray-400 font-semibold uppercase text-[10px] block">Họ và Tên</span>
+                        <span className="font-bold text-gray-900 text-sm line-clamp-1">{loggedInAccount.fullName}</span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-indigo-50 shadow-xs">
+                        <span className="text-gray-400 font-semibold uppercase text-[10px] block">Lớp</span>
+                        <span className="font-bold text-blue-700 text-sm">{loggedInAccount.studentClass}</span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-indigo-50 shadow-xs">
+                        <span className="text-gray-400 font-semibold uppercase text-[10px] block">Trường</span>
+                        <span className="font-semibold text-gray-800 text-sm line-clamp-1">{loggedInAccount.schoolName || 'N/A'}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
-                <div className="flex gap-3 pt-2">
-                  <Button variant="outline" className="flex-1 h-12 rounded-xl font-medium" onClick={() => setExam(null)}>Quay lại</Button>
-                  <Button className="flex-[2] bg-emerald-600 hover:bg-emerald-700 h-12 rounded-xl font-bold shadow-lg shadow-emerald-200" onClick={verifyStudentAndStart} disabled={loading}>
-                    {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Xác thực & Bắt đầu"}
-                  </Button>
+                {/* BOTTOM BOX: Danh sách đề đã làm */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
+                      <FileText className="w-4.5 h-4.5 text-blue-600" />
+                      <span>Danh sách đề đã làm</span>
+                      {loggedInAccount && (
+                        <Badge variant="secondary" className="bg-blue-100 text-blue-800 font-bold">
+                          {studentHistoryResults.length} bài
+                        </Badge>
+                      )}
+                    </h3>
+                    {loggedInAccount && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="text-xs text-blue-600 hover:text-blue-800 h-8"
+                        onClick={() => fetchStudentHistory(loggedInAccount)}
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                        Làm mới
+                      </Button>
+                    )}
+                  </div>
+
+                  {!loggedInAccount ? (
+                    <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200 p-6 space-y-2">
+                      <Lock className="w-8 h-8 text-gray-300 mx-auto" />
+                      <p className="text-xs text-gray-500 font-medium">
+                        Vui lòng nhập <strong className="text-gray-700">Mã học sinh</strong> và <strong className="text-gray-700">Mật khẩu</strong> ở khung trên để xem danh sách các bài thi em đã hoàn thành.
+                      </p>
+                    </div>
+                  ) : loadingHistory ? (
+                    <div className="text-center py-8 text-gray-500 text-xs flex items-center justify-center gap-2">
+                      <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                      <span>Đang nạp danh sách đề đã làm...</span>
+                    </div>
+                  ) : studentHistoryResults.length === 0 ? (
+                    <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200 p-6">
+                      <Trophy className="w-8 h-8 text-amber-300 mx-auto mb-2" />
+                      <p className="text-xs text-gray-500 font-medium">Em chưa làm bài thi nào. Hãy tìm kiếm mã đề thi bên trái để bắt đầu!</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-gray-200">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-gray-100 text-gray-700 font-bold uppercase border-b border-gray-200">
+                          <tr>
+                            <th className="py-2.5 px-3 w-12 text-center">STT</th>
+                            <th className="py-2.5 px-3">Tên đề thi</th>
+                            <th className="py-2.5 px-3 text-center">Điểm số</th>
+                            <th className="py-2.5 px-3 text-center">Xem lại</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 font-medium text-gray-800">
+                          {studentHistoryResults.map((r, idx) => (
+                            <tr key={r.id || idx} className="hover:bg-blue-50/50 transition-colors">
+                              <td className="py-3 px-3 text-center font-bold text-gray-500">{idx + 1}</td>
+                              <td className="py-3 px-3">
+                                <div className="font-bold text-gray-900 line-clamp-1">{r.examTitle || r.examId}</div>
+                                <div className="text-[10px] text-gray-400 mt-0.5">
+                                  {r.submittedAt ? new Date(r.submittedAt).toLocaleString("vi-VN") : "N/A"}
+                                </div>
+                              </td>
+                              <td className="py-3 px-3 text-center font-black text-sm text-blue-600">
+                                {typeof r.score === "number" ? r.score.toFixed(1) : r.score}
+                              </td>
+                              <td className="py-3 px-3 text-center">
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-8 px-2.5 text-xs font-bold text-indigo-600 hover:bg-indigo-600 hover:text-white border-indigo-200 rounded-lg gap-1 transition-all"
+                                  onClick={() => handleOpenReviewModal(r)}
+                                  title="Xem lại bài làm chi tiết"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>Xem lại</span>
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       </motion.div>
+
       {/* First Login Password Change Modal */}
       <Dialog open={showPasswordChangeModal} onOpenChange={(open) => !open && setShowPasswordChangeModal(false)}>
         <DialogContent className="max-w-md">
@@ -901,6 +1258,167 @@ export default function StudentExam() {
             >
               {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Lưu MK mới & Bắt đầu làm bài"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Review Past Exam Modal */}
+      <Dialog open={!!selectedReviewResult} onOpenChange={(open) => !open && setSelectedReviewResult(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl font-bold text-blue-900">
+              <Trophy className="w-6 h-6 text-amber-500" />
+              Chi tiết bài làm: {selectedReviewResult?.examTitle || selectedReviewResult?.examId}
+            </DialogTitle>
+            <DialogDescription className="flex flex-wrap items-center gap-3 pt-1 text-xs">
+              <span>Học sinh: <strong className="text-gray-900">{selectedReviewResult?.studentName}</strong> (Lớp {selectedReviewResult?.studentClass})</span>
+              <span>•</span>
+              <span className="text-blue-700 font-bold">Điểm số: {selectedReviewResult?.score?.toFixed(1)}/10</span>
+              <span>•</span>
+              <span className="text-emerald-700 font-bold">Số câu đúng: {selectedReviewResult?.correctAnswers}/{selectedReviewResult?.totalQuestions}</span>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            {loadingReview ? (
+              <div className="text-center py-12 text-gray-500 text-sm flex items-center justify-center gap-2">
+                <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
+                <span>Đang tải nội dung đề thi và đáp án chi tiết...</span>
+              </div>
+            ) : reviewExamData?.questions && reviewExamData.questions.length > 0 ? (
+              reviewExamData.questions.map((q, idx) => {
+                const studentAnswer = selectedReviewResult?.answers?.[q.id];
+                let isCorrect = false;
+
+                if (q.type === "MC") {
+                  isCorrect = studentAnswer === q.options?.find(o => o.isCorrect)?.id;
+                } else if (q.type === "TF") {
+                  isCorrect = q.options?.every((opt, i) => (studentAnswer?.[`opt_${i}`] ?? null) === opt.isCorrect) ?? false;
+                } else if (q.type === "SA") {
+                  isCorrect = studentAnswer?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase();
+                }
+
+                return (
+                  <Card key={q.id || idx} className={`border-none shadow-sm ${isCorrect ? 'ring-2 ring-emerald-300 bg-white' : 'ring-2 ring-rose-300 bg-white'}`}>
+                    <CardHeader className="pb-2">
+                      <div className="flex justify-between items-center mb-1">
+                        <Badge variant="outline" className={isCorrect ? "text-emerald-800 bg-emerald-100 border-emerald-400 font-bold" : "text-rose-800 bg-rose-100 border-rose-400 font-bold"}>
+                          Câu {idx + 1} - {isCorrect ? "✓ Chính xác" : "✗ Chưa chính xác"}
+                        </Badge>
+                        <Badge variant="secondary" className="text-[10px] uppercase font-bold">
+                          {q.points || (q.type === "TF" ? 1.0 : 0.25)} điểm
+                        </Badge>
+                      </div>
+
+                      {q.context && (
+                        <div className="my-2 p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-950 text-xs">
+                          <strong className="block text-amber-900 mb-1">📖 Lời dẫn / Ngữ liệu:</strong>
+                          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                            {q.context}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+
+                      <CardTitle className="text-base font-bold leading-relaxed pt-1">
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {q.content}
+                        </ReactMarkdown>
+                      </CardTitle>
+                    </CardHeader>
+
+                    <CardContent className="space-y-3 pt-1">
+                      {q.type === "MC" && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {q.options?.map((opt) => {
+                            const isStudentChoice = studentAnswer === opt.id;
+                            const isCorrectOpt = opt.isCorrect;
+                            return (
+                              <div key={opt.id} className={`p-3 rounded-xl border flex items-start gap-2 text-xs ${
+                                isCorrectOpt 
+                                  ? 'bg-emerald-800 text-white border-emerald-900 font-bold' 
+                                  : isStudentChoice 
+                                  ? 'bg-blue-800 text-white border-blue-900 font-bold' 
+                                  : 'bg-white text-gray-700 border-gray-200'
+                              }`}>
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-black shrink-0 ${
+                                  isCorrectOpt ? 'bg-white text-emerald-900' : isStudentChoice ? 'bg-white text-blue-900' : 'bg-gray-100 text-gray-700'
+                                }`}>
+                                  {opt.id}.
+                                </span>
+                                <div className="flex-1">
+                                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                    {opt.text}
+                                  </ReactMarkdown>
+                                </div>
+                                {isCorrectOpt && <span className="text-[10px] bg-emerald-950 text-white px-1.5 py-0.5 rounded">✓ Đúng</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {q.type === "TF" && (
+                        <div className="space-y-2">
+                          {q.options?.map((opt, i) => {
+                            const studentChoice = studentAnswer?.[`opt_${i}`];
+                            const isCorrectChoice = studentChoice === opt.isCorrect;
+                            return (
+                              <div key={opt.id} className={`p-2.5 rounded-xl border text-xs flex justify-between items-center ${
+                                isCorrectChoice ? 'bg-emerald-50 border-emerald-300' : 'bg-rose-50 border-rose-300'
+                              }`}>
+                                <div className="flex gap-2 items-start flex-1">
+                                  <span className="font-bold">{String.fromCharCode(97 + i)}.</span>
+                                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                    {opt.text}
+                                  </ReactMarkdown>
+                                </div>
+                                <div className="flex gap-2 shrink-0 ml-2">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${studentChoice === true ? "bg-blue-700 text-white" : "bg-gray-100 text-gray-400"}`}>Đúng</span>
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${studentChoice === false ? "bg-red-700 text-white" : "bg-gray-100 text-gray-400"}`}>Sai</span>
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-800 text-white font-bold text-[10px]">Đáp án: {opt.isCorrect ? "Đúng" : "Sai"}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {q.type === "SA" && (
+                        <div className="space-y-1.5 text-xs">
+                          <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg">
+                            <span className="font-bold text-blue-900">Trả lời của bạn: </span>
+                            <span className="font-mono font-bold text-blue-950">{studentAnswer || "(Chưa trả lời)"}</span>
+                          </div>
+                          {!isCorrect && (
+                            <div className="p-2.5 bg-emerald-50 border border-emerald-300 rounded-lg">
+                              <span className="font-bold text-emerald-900">Đáp án đúng: </span>
+                              <span className="font-mono font-bold text-emerald-950">{q.correctAnswer}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {q.explanation && (
+                        <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-950">
+                          <strong className="block text-amber-900 mb-1">Lời giải chi tiết:</strong>
+                          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                            {q.explanation}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })
+            ) : (
+              <div className="text-center py-8 text-gray-500 text-sm">
+                Không thể tải câu hỏi đề thi này.
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectedReviewResult(null)}>Đóng</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
