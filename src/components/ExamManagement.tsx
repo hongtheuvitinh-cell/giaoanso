@@ -98,7 +98,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
   const [viewResult, setViewResult] = useState<ExamResult | null>(null);
-  const [deleteData, setDeleteData] = useState<{ id: string, type: 'exam' | 'result' | 'folder' | 'student' } | null>(null);
+  const [deleteData, setDeleteData] = useState<{ id: string, type: 'exam' | 'result' | 'folder' | 'student' | 'user' } | null>(null);
 
   // Pagination states (12-15 items per page)
   const [examsPage, setExamsPage] = useState(1);
@@ -460,6 +460,27 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     } catch (err) {
       console.error(err);
       toast.error("Lỗi khi xóa kết quả.");
+    }
+  };
+
+  const handleUpdateUserRole = async (uid: string, newRole: "admin" | "teacher" | "pending") => {
+    try {
+      await updateDoc(doc(db, "users", uid), { role: newRole });
+      toast.success(`Đã cập nhật vai trò người dùng thành ${newRole === "admin" ? "Quản trị viên" : newRole === "teacher" ? "Giáo viên" : "Chờ duyệt"}!`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Lỗi khi cập nhật vai trò.");
+    }
+  };
+
+  const handleDeleteUser = async (uid: string) => {
+    try {
+      await deleteDoc(doc(db, "users", uid));
+      toast.success("Đã xóa tài khoản người dùng thành công.");
+      setDeleteData(null);
+    } catch (err) {
+      console.error(err);
+      toast.error("Lỗi khi xóa tài khoản người dùng.");
     }
   };
 
@@ -1371,13 +1392,89 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
             <div className="flex items-center gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
               <Search className="w-5 h-5 text-gray-400" />
               <Input 
-                placeholder="Tìm kiếm theo email hoặc tên..." 
+                placeholder="Tìm kiếm giáo viên/người dùng theo email hoặc tên..." 
                 className="border-none focus-visible:ring-0 text-sm"
                 value={userSearch}
                 onChange={(e) => setUserSearch(e.target.value)}
               />
             </div>
-            {/* User management list */}
+
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="text-xs text-gray-500 uppercase bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-6 py-4 font-bold">Tên hiển thị / Email</th>
+                      <th className="px-6 py-4 font-bold">Email tài khoản</th>
+                      <th className="px-6 py-4 font-bold">Vai trò / Quyền</th>
+                      <th className="px-6 py-4 font-bold">Ngày tạo</th>
+                      <th className="px-6 py-4 font-bold text-right">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredUsers.slice((usersPage - 1) * 15, usersPage * 15).map((u) => (
+                      <tr key={u.uid} className="hover:bg-blue-50/30 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="font-bold text-gray-900 text-base flex items-center gap-2">
+                            <UserIcon className="w-4 h-4 text-blue-600" />
+                            {u.displayName || u.email.split("@")[0]}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="font-mono text-xs text-gray-700">{u.email}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className={`font-bold text-xs ${
+                              u.role === "admin" ? "bg-purple-50 text-purple-700 border-purple-200" :
+                              u.role === "teacher" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                              "bg-amber-50 text-amber-700 border-amber-200"
+                            }`}>
+                              {u.role === "admin" ? "Quản trị viên" : u.role === "teacher" ? "Giáo viên" : "Chờ duyệt"}
+                            </Badge>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-xs text-gray-500">
+                          {u.createdAt ? new Date(u.createdAt).toLocaleDateString("vi-VN") : "N/A"}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end items-center gap-2">
+                            <Select value={u.role} onValueChange={(val: any) => handleUpdateUserRole(u.uid, val)}>
+                              <SelectTrigger className="h-8 text-xs w-[130px] rounded-lg">
+                                <SelectValue placeholder="Phân quyền" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="teacher">Giáo viên</SelectItem>
+                                <SelectItem value="admin">Quản trị viên</SelectItem>
+                                <SelectItem value="pending">Chờ duyệt</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                              onClick={() => setDeleteData({ id: u.uid, type: 'user' })}
+                              title="Xóa tài khoản"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredUsers.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-16 text-center text-gray-400">
+                          <Shield className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                          <p className="font-medium text-gray-600">Không tìm thấy tài khoản người dùng/giáo viên nào.</p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {renderPagination(usersPage, filteredUsers.length, 15, setUsersPage)}
+            </div>
           </TabsContent>
         )}
       </Tabs>
@@ -1544,7 +1641,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
               Xác nhận xóa
             </DialogTitle>
             <DialogDescription className="py-4">
-              Bạn có chắc chắn muốn xóa {deleteData?.type === 'exam' ? 'đề thi này (và toàn bộ kết quả liên quan)' : deleteData?.type === 'folder' ? 'thư mục này' : deleteData?.type === 'student' ? 'tài khoản học sinh này' : 'kết quả này'} không? Hành động này không thể hoàn tác.
+              Bạn có chắc chắn muốn xóa {deleteData?.type === 'exam' ? 'đề thi này (và toàn bộ kết quả liên quan)' : deleteData?.type === 'folder' ? 'thư mục này' : deleteData?.type === 'student' ? 'tài khoản học sinh này' : deleteData?.type === 'user' ? 'tài khoản người dùng này' : 'kết quả này'} không? Hành động này không thể hoàn tác.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1556,11 +1653,84 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 if (deleteData.type === 'exam') handleDeleteExam(deleteData.id);
                 else if (deleteData.type === 'folder') handleDeleteFolder(deleteData.id);
                 else if (deleteData.type === 'student') handleDeleteStudentAccount(deleteData.id);
+                else if (deleteData.type === 'user') handleDeleteUser(deleteData.id);
                 else if (deleteData.type === 'result') handleDeleteResult(deleteData.id);
               }}
             >
               Xác nhận xóa
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Result Details Modal */}
+      <Dialog open={!!viewResult} onOpenChange={(open) => !open && setViewResult(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl font-bold text-blue-900">
+              <Trophy className="w-5 h-5 text-amber-500" />
+              Chi tiết kết quả bài thi
+            </DialogTitle>
+            <DialogDescription className="text-xs pt-1">
+              Học sinh: <strong className="text-gray-900">{viewResult?.studentName}</strong> (Lớp {viewResult?.studentClass} {viewResult?.schoolName ? `- ${viewResult.schoolName}` : ''})
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewResult && (
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                <div>
+                  <span className="text-[10px] text-gray-500 font-bold uppercase block">Môn / Đề thi</span>
+                  <span className="text-sm font-bold text-gray-900 line-clamp-1">{viewResult.examTitle}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-gray-500 font-bold uppercase block">Điểm số</span>
+                  <span className="text-sm font-black text-blue-600">{viewResult.score.toFixed(1)} / 10</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-gray-500 font-bold uppercase block">Số câu đúng</span>
+                  <span className="text-sm font-bold text-emerald-600">{viewResult.correctAnswers} / {viewResult.totalQuestions} câu</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-gray-500 font-bold uppercase block">Thời gian nộp</span>
+                  <span className="text-xs font-medium text-gray-700">{new Date(viewResult.submittedAt).toLocaleString("vi-VN")}</span>
+                </div>
+              </div>
+
+              {viewResult.answers && Object.keys(viewResult.answers).length > 0 && (
+                <div className="space-y-2 pt-2">
+                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Đáp án đã chọn:</h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {Object.entries(viewResult.answers).map(([qId, ansVal], idx) => (
+                      <div key={qId} className="p-2 bg-white rounded-lg border border-gray-200 text-xs flex justify-between items-center">
+                        <span className="font-semibold text-gray-600">Câu {idx + 1}:</span>
+                        <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded font-mono">
+                          {typeof ansVal === 'object' ? JSON.stringify(ansVal) : String(ansVal)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="flex justify-between items-center sm:justify-between pt-2 border-t">
+            <Button 
+              variant="destructive" 
+              size="sm" 
+              className="gap-1.5 font-bold"
+              onClick={() => {
+                if (viewResult) {
+                  setDeleteData({ id: viewResult.id, type: 'result' });
+                  setViewResult(null);
+                }
+              }}
+            >
+              <Trash2 className="w-4 h-4" />
+              Xóa kết quả này
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setViewResult(null)}>Đóng</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
