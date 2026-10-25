@@ -26,13 +26,11 @@ service cloud.firestore {
     }
 
     match /results/{resultId} {
-      // Students can submit exam results without logging in
+      // Students can submit exam results and view history
       allow create: if request.resource.data.studentName is string &&
                    request.resource.data.examId is string;
-      
-      // Authenticated teachers/admins can read and delete results
-      allow read, delete: if isAuthenticated();
-      allow update: if isAuthenticated();
+      allow read, list: if true;
+      allow delete, update: if isAuthenticated();
     }
 
     match /folders/{folderId} {
