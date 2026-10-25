@@ -15,6 +15,7 @@ import {
   Trophy,
   Eye,
   Edit2,
+  Edit3,
   Share2,
   Download,
   FileUp,
@@ -207,6 +208,30 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   // Assign exam to folder modal
   const [assignExamModal, setAssignExamModal] = useState<Exam | null>(null);
   const [targetFolderId, setTargetFolderId] = useState<string>("none");
+
+  // Quick rename exam modal state
+  const [renameExamModal, setRenameExamModal] = useState<{ id: string; title: string } | null>(null);
+  const [renameInput, setRenameInput] = useState("");
+
+  const handleSaveExamTitle = async () => {
+    if (!renameExamModal || !renameInput.trim()) {
+      toast.error("Vui lòng nhập tên đề thi.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, "exams", renameExamModal.id), {
+        title: renameInput.trim()
+      });
+      toast.success("Đã đổi tên đề thi thành công!");
+      setRenameExamModal(null);
+    } catch (err) {
+      console.error("Lỗi khi đổi tên đề thi:", err);
+      toast.error("Không thể đổi tên đề thi. Vui lòng thử lại.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!userProfile) return;
@@ -662,10 +687,13 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => setPreviewExam(exam)} title="Xem đề">
                           <Eye className="w-4 h-4" />
                         </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-purple-600 hover:text-purple-800 hover:bg-purple-50" onClick={() => { setRenameExamModal({ id: exam.id, title: exam.title }); setRenameInput(exam.title); }} title="Đổi tên nhanh">
+                          <Edit3 className="w-4 h-4" />
+                        </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50" onClick={() => { setAssignExamModal(exam); setTargetFolderId(exam.folderId || "none"); }} title="Chuyển vào thư mục">
                           <FolderIcon className="w-4 h-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-500 hover:text-amber-700 hover:bg-amber-50" onClick={() => onEdit?.(exam)} title="Chỉnh sửa">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-500 hover:text-amber-700 hover:bg-amber-50" onClick={() => onEdit?.(exam)} title="Chỉnh sửa toàn bộ">
                           <Edit2 className="w-4 h-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50" onClick={() => onDuplicate?.(exam)} title="Sao chép">
@@ -676,7 +704,18 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                         </Button>
                       </div>
                     </div>
-                    <CardTitle className="text-lg mt-2 line-clamp-1">{exam.title}</CardTitle>
+                    <div className="flex items-center justify-between gap-1.5 mt-2">
+                      <CardTitle className="text-lg line-clamp-1 flex-1 font-bold text-gray-900">{exam.title}</CardTitle>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-7 w-7 text-gray-400 hover:text-purple-600 hover:bg-purple-50 shrink-0 rounded-lg" 
+                        onClick={() => { setRenameExamModal({ id: exam.id, title: exam.title }); setRenameInput(exam.title); }} 
+                        title="Đổi tên nhanh"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                     <CardDescription className="flex items-center gap-2 text-xs">
                       <span>Lớp {exam.grade}</span>
                       <span>•</span>
@@ -881,10 +920,13 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => setPreviewExam(exam)} title="Xem đề">
                               <Eye className="w-4 h-4" />
                             </Button>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-purple-600 hover:text-purple-800 hover:bg-purple-50" onClick={() => { setRenameExamModal({ id: exam.id, title: exam.title }); setRenameInput(exam.title); }} title="Đổi tên nhanh">
+                              <Edit3 className="w-4 h-4" />
+                            </Button>
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50" onClick={() => { setAssignExamModal(exam); setTargetFolderId(exam.folderId || "none"); }} title="Chuyển vào thư mục">
                               <FolderIcon className="w-4 h-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-500 hover:text-amber-700 hover:bg-amber-50" onClick={() => onEdit?.(exam)} title="Chỉnh sửa">
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-500 hover:text-amber-700 hover:bg-amber-50" onClick={() => onEdit?.(exam)} title="Chỉnh sửa toàn bộ">
                               <Edit2 className="w-4 h-4" />
                             </Button>
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50" onClick={() => onDuplicate?.(exam)} title="Sao chép">
@@ -895,7 +937,18 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                             </Button>
                           </div>
                         </div>
-                        <CardTitle className="text-lg mt-2 line-clamp-1">{exam.title}</CardTitle>
+                        <div className="flex items-center justify-between gap-1.5 mt-2">
+                          <CardTitle className="text-lg line-clamp-1 flex-1 font-bold text-gray-900">{exam.title}</CardTitle>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-7 w-7 text-gray-400 hover:text-purple-600 hover:bg-purple-50 shrink-0 rounded-lg" 
+                            onClick={() => { setRenameExamModal({ id: exam.id, title: exam.title }); setRenameInput(exam.title); }} 
+                            title="Đổi tên nhanh"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
                         <CardDescription className="flex items-center gap-2 text-xs">
                           <span>Lớp {exam.grade}</span>
                           <span>•</span>
@@ -1633,6 +1686,51 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
             <Button variant="outline" onClick={() => setResetStudentAccount(null)}>Hủy bỏ</Button>
             <Button onClick={handleConfirmResetPassword} className="bg-amber-600 hover:bg-amber-700 text-white font-bold">
               Xác nhận Reset MK
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick Rename Exam Dialog */}
+      <Dialog open={!!renameExamModal} onOpenChange={(open) => !open && setRenameExamModal(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-purple-900 font-bold">
+              <Edit3 className="w-5 h-5 text-purple-600" />
+              Đổi tên Đề thi Nhanh
+            </DialogTitle>
+            <DialogDescription className="text-xs text-gray-500 pt-1">
+              Chỉnh sửa nhanh tiêu đề mà không cần nạp toàn bộ danh sách câu hỏi.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-700">Tên đề thi mới *</label>
+              <Input 
+                value={renameInput}
+                onChange={(e) => setRenameInput(e.target.value)}
+                placeholder="Nhập tên đề thi mới..."
+                className="h-11 rounded-xl font-medium"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveExamTitle();
+                }}
+              />
+            </div>
+            <div className="text-[11px] text-gray-400 italic">
+              💡 Mã đề: <code className="font-mono text-gray-600">{renameExamModal?.id}</code>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setRenameExamModal(null)}>Hủy bỏ</Button>
+            <Button 
+              onClick={handleSaveExamTitle} 
+              disabled={loading}
+              className="bg-purple-600 hover:bg-purple-700 text-white font-bold"
+            >
+              Lưu tên mới
             </Button>
           </DialogFooter>
         </DialogContent>
