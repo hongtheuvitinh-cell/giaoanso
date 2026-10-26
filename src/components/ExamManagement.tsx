@@ -625,32 +625,136 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
 
   const teacherExamIds = new Set(exams.map(e => e.id));
 
-  const availableSchools = Array.from(
-    new Set(
-      results
-        .filter(r => userProfile?.role === "admin" || teacherExamIds.has(r.examId))
-        .map(r => r.schoolName?.trim())
-        .filter(Boolean) as string[]
-    )
-  ).sort();
+  // Accessible results based on role
+  const userAccessibleResults = results.filter(r => 
+    userProfile?.role === "admin" || teacherExamIds.has(r.examId)
+  );
 
-  const availableClasses = Array.from(
-    new Set(
-      results
-        .filter(r => userProfile?.role === "admin" || teacherExamIds.has(r.examId))
-        .map(r => r.studentClass?.trim())
-        .filter(Boolean) as string[]
-    )
-  ).sort();
-
-  const filteredResults = results.filter(r => {
-    if (userProfile?.role !== "admin" && !teacherExamIds.has(r.examId)) {
-      return false;
+  // 1. Dynamic Available Schools (depends on current selectedExamId & selectedClass)
+  const availableSchoolsMap = new Map<string, number>();
+  userAccessibleResults.forEach(r => {
+    if (selectedExamId !== "all" && r.examId !== selectedExamId) return;
+    if (selectedClass !== "all" && (r.studentClass?.trim() || "") !== selectedClass) return;
+    const sch = r.schoolName?.trim();
+    if (sch) {
+      availableSchoolsMap.set(sch, (availableSchoolsMap.get(sch) || 0) + 1);
     }
+  });
+  const availableSchools = Array.from(availableSchoolsMap.keys()).sort();
+
+  // 2. Dynamic Available Classes (depends on current selectedExamId & selectedSchool)
+  const availableClassesMap = new Map<string, number>();
+  userAccessibleResults.forEach(r => {
+    if (selectedExamId !== "all" && r.examId !== selectedExamId) return;
+    if (selectedSchool !== "all" && (r.schoolName?.trim() || "") !== selectedSchool) return;
+    const cls = r.studentClass?.trim();
+    if (cls) {
+      availableClassesMap.set(cls, (availableClassesMap.get(cls) || 0) + 1);
+    }
+  });
+  const availableClasses = Array.from(availableClassesMap.keys()).sort();
+
+  // 3. Dynamic Available Exams (depends on current selectedClass & selectedSchool)
+  const activeExamsMap = new Map<string, number>();
+  userAccessibleResults.forEach(r => {
+    if (selectedClass !== "all" && (r.studentClass?.trim() || "") !== selectedClass) return;
+    if (selectedSchool !== "all" && (r.schoolName?.trim() || "") !== selectedSchool) return;
+    if (r.examId) {
+      activeExamsMap.set(r.examId, (activeExamsMap.get(r.examId) || 0) + 1);
+    }
+  });
+
+  const activeExamsList: { id: string; title: string; subject: string; count: number }[] = [];
+  const otherExamsList: { id: string; title: string; subject: string; count: number }[] = [];
+
+  exams.forEach(ex => {
+    const count = activeExamsMap.get(ex.id) || 0;
+    if (count > 0) {
+      activeExamsList.push({ id: ex.id, title: ex.title, subject: ex.subject, count });
+    } else {
+      otherExamsList.push({ id: ex.id, title: ex.title, subject: ex.subject, count: 0 });
+    }
+  });
+
+  // Catch any orphan result examId not present in `exams` state
+  activeExamsMap.forEach((count, examId) => {
+    if (!exams.some(e => e.id === examId)) {
+      const sampleRes = userAccessibleResults.find(r => r.examId === examId);
+      activeExamsList.push({
+        id: examId,
+        title: sampleRes?.examTitle || examId,
+        subject: "Chung",
+        count
+      });
+    }
+  });
+
+  activeExamsList.sort((a, b) => b.count - a.count || a.title.localeCompare(b.title));
+  otherExamsList.sort((a, b) => a.title.localeCompare(b.title));
+
+  // Cascading Filter Handlers
+  const handleSelectClass = (newClass: string) => {
+    setSelectedClass(newClass);
+    if (newClass !== "all" && selectedExamId !== "all") {
+      const isExamValid = userAccessibleResults.some(
+        r => (r.studentClass?.trim() || "") === newClass && 
+             r.examId === selectedExamId &&
+             (selectedSchool === "all" || (r.schoolName?.trim() || "") === selectedSchool)
+      );
+      if (!isExamValid) {
+        setSelectedExamId("all");
+      }
+    }
+  };
+
+  const handleSelectExam = (newExamId: string) => {
+    setSelectedExamId(newExamId);
+    if (newExamId !== "all" && selectedClass !== "all") {
+      const isClassValid = userAccessibleResults.some(
+        r => r.examId === newExamId && 
+             (r.studentClass?.trim() || "") === selectedClass &&
+             (selectedSchool === "all" || (r.schoolName?.trim() || "") === selectedSchool)
+      );
+      if (!isClassValid) {
+        setSelectedClass("all");
+      }
+    }
+  };
+
+  const handleSelectSchool = (newSchool: string) => {
+    setSelectedSchool(newSchool);
+    if (newSchool !== "all") {
+      if (selectedClass !== "all") {
+        const isClassValid = userAccessibleResults.some(
+          r => (r.schoolName?.trim() || "") === newSchool && 
+               (r.studentClass?.trim() || "") === selectedClass
+        );
+        if (!isClassValid) setSelectedClass("all");
+      }
+      if (selectedExamId !== "all") {
+        const isExamValid = userAccessibleResults.some(
+          r => (r.schoolName?.trim() || "") === newSchool && r.examId === selectedExamId
+        );
+        if (!isExamValid) setSelectedExamId("all");
+      }
+    }
+  };
+
+  const handleResetResultFilters = () => {
+    setSelectedExamId("all");
+    setSelectedClass("all");
+    setSelectedSchool("all");
+    setResultSearch("");
+  };
+
+  const filteredResults = userAccessibleResults.filter(r => {
     if (selectedExamId !== "all" && r.examId !== selectedExamId) {
       return false;
     }
     if (selectedClass !== "all" && (r.studentClass?.trim() || "") !== selectedClass) {
+      return false;
+    }
+    if (selectedSchool !== "all" && (r.schoolName?.trim() || "") !== selectedSchool) {
       return false;
     }
     if (resultSearch.trim()) {
@@ -1325,37 +1429,92 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                   />
                 </div>
 
-                {/* Wider Exam / Subject Select */}
-                <div className="w-full sm:w-[320px] shrink-0">
-                  <Select value={selectedExamId} onValueChange={setSelectedExamId}>
-                    <SelectTrigger className="h-10 rounded-xl text-xs sm:text-sm font-medium">
-                      <FileText className="w-4 h-4 mr-1.5 text-blue-600 shrink-0" />
-                      <SelectValue placeholder="Chọn đề thi / Môn" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tất cả đề thi ({exams.length})</SelectItem>
-                      {exams.map((ex) => (
-                        <SelectItem key={ex.id} value={ex.id}>{ex.title} ({ex.subject})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {/* School Select (if multiple schools exist) */}
+                {availableSchools.length > 0 && (
+                  <div className="w-full sm:w-[200px] shrink-0">
+                    <Select value={selectedSchool} onValueChange={handleSelectSchool}>
+                      <SelectTrigger className="h-10 rounded-xl text-xs sm:text-sm font-medium">
+                        <School className="w-4 h-4 mr-1.5 text-amber-600 shrink-0" />
+                        <SelectValue placeholder="Lọc theo Trường" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Tất cả trường ({availableSchools.length})</SelectItem>
+                        {availableSchools.map((sch) => (
+                          <SelectItem key={sch} value={sch}>{sch}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
 
-                {/* Wider Class Select */}
+                {/* Class Select (Cascading) */}
                 <div className="w-full sm:w-[220px] shrink-0">
-                  <Select value={selectedClass} onValueChange={setSelectedClass}>
+                  <Select value={selectedClass} onValueChange={handleSelectClass}>
                     <SelectTrigger className="h-10 rounded-xl text-xs sm:text-sm font-medium">
                       <GraduationCap className="w-4 h-4 mr-1.5 text-purple-600 shrink-0" />
                       <SelectValue placeholder="Lọc theo Lớp" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">Tất cả lớp ({availableClasses.length})</SelectItem>
-                      {availableClasses.map((cls) => (
-                        <SelectItem key={cls} value={cls}>Lớp {cls}</SelectItem>
-                      ))}
+                      <SelectItem value="all">
+                        {selectedExamId !== "all" ? "Tất cả lớp làm đề này" : "Tất cả lớp"} ({availableClasses.length} lớp)
+                      </SelectItem>
+                      {availableClasses.map((cls) => {
+                        const count = availableClassesMap.get(cls) || 0;
+                        return (
+                          <SelectItem key={cls} value={cls}>
+                            Lớp {cls} ({count} bài thi)
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Exam / Subject Select (Cascading) */}
+                <div className="w-full sm:w-[320px] shrink-0">
+                  <Select value={selectedExamId} onValueChange={handleSelectExam}>
+                    <SelectTrigger className="h-10 rounded-xl text-xs sm:text-sm font-medium">
+                      <FileText className="w-4 h-4 mr-1.5 text-blue-600 shrink-0" />
+                      <SelectValue placeholder="Chọn đề thi / Môn" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">
+                        {selectedClass !== "all" ? `Tất cả đề của Lớp ${selectedClass}` : "Tất cả đề thi"} ({activeExamsList.reduce((acc, x) => acc + x.count, 0)} bài)
+                      </SelectItem>
+                      {activeExamsList.map((ex) => (
+                        <SelectItem key={ex.id} value={ex.id}>
+                          {ex.title} ({ex.count} bài thi)
+                        </SelectItem>
+                      ))}
+                      {selectedClass !== "all" && otherExamsList.length > 0 && (
+                        <>
+                          <div className="px-2 py-1 text-[10px] font-bold text-gray-400 uppercase border-t mt-1 pt-1">
+                            Đề chưa có lượt nộp từ lớp {selectedClass}
+                          </div>
+                          {otherExamsList.map((ex) => (
+                            <SelectItem key={ex.id} value={ex.id} className="text-gray-400">
+                              {ex.title} (0 bài)
+                            </SelectItem>
+                          ))}
+                        </>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Reset Filters Button */}
+                {(selectedExamId !== "all" || selectedClass !== "all" || selectedSchool !== "all" || resultSearch.trim() !== "") && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={handleResetResultFilters}
+                    className="h-10 px-3 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 rounded-xl font-medium gap-1.5 shrink-0"
+                    title="Xóa toàn bộ bộ lọc"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-red-500" />
+                    Xóa lọc
+                  </Button>
+                )}
               </div>
 
               <div className="flex gap-2 shrink-0">
