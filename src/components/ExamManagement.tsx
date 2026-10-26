@@ -68,7 +68,7 @@ interface UserProfile {
   uid: string;
   email: string;
   displayName: string;
-  role: "admin" | "teacher" | "pending";
+  role: "admin" | "teacher" | "pending" | "disabled";
   createdAt: string;
 }
 
@@ -188,9 +188,10 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   // Folder creation modal state
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
-  const [newFolderGrade, setNewFolderGrade] = useState("12");
+  const [newFolderGrade, setNewFolderGrade] = useState("10");
   const [newFolderParentId, setNewFolderParentId] = useState<string>("none");
   const [currentFolderParentId, setCurrentFolderParentId] = useState<string | null>(null);
+  const [selectedFolderGrade, setSelectedFolderGrade] = useState<string>("10"); // Default Khối 10
 
   const getBreadcrumbs = (folderId: string | null) => {
     const crumbs: Folder[] = [];
@@ -209,14 +210,20 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
 
   const currentLevelFolders = folders.filter(f => {
     if (currentFolderParentId === null) {
-      return !f.parentId || f.parentId === "none";
+      const isRoot = !f.parentId || f.parentId === "none";
+      if (!isRoot) return false;
+      if (selectedFolderGrade === "all") return true;
+      return (f.grade || "chung") === selectedFolderGrade;
     }
     return f.parentId === currentFolderParentId;
   });
 
   const currentLevelExams = exams.filter(e => {
     if (currentFolderParentId === null) {
-      return !e.folderId || e.folderId === "none";
+      const isRoot = !e.folderId || e.folderId === "none";
+      if (!isRoot) return false;
+      if (selectedFolderGrade === "all") return true;
+      return String(e.grade || "").includes(selectedFolderGrade);
     }
     return e.folderId === currentFolderParentId;
   });
@@ -537,10 +544,15 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     }
   };
 
-  const handleUpdateUserRole = async (uid: string, newRole: "admin" | "teacher" | "pending") => {
+  const handleUpdateUserRole = async (uid: string, newRole: "admin" | "teacher" | "pending" | "disabled") => {
     try {
-      await updateDoc(doc(db, "users", uid), { role: newRole });
-      toast.success(`Đã cập nhật vai trò người dùng thành ${newRole === "admin" ? "Quản trị viên" : newRole === "teacher" ? "Giáo viên" : "Chờ duyệt"}!`);
+      await updateDoc(doc(db, "users", uid), { role: newRole, disabled: newRole === "disabled" });
+      toast.success(`Đã cập nhật vai trò người dùng thành ${
+        newRole === "admin" ? "Quản trị viên" : 
+        newRole === "teacher" ? "Giáo viên (Đã duyệt)" : 
+        newRole === "disabled" ? "Đã khóa / Xóa" : 
+        "Chờ duyệt"
+      }!`);
     } catch (err) {
       console.error(err);
       toast.error("Lỗi khi cập nhật vai trò.");
@@ -549,8 +561,8 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
 
   const handleDeleteUser = async (uid: string) => {
     try {
-      await deleteDoc(doc(db, "users", uid));
-      toast.success("Đã xóa tài khoản người dùng thành công.");
+      await setDoc(doc(db, "users", uid), { role: "disabled", disabled: true, deletedAt: new Date().toISOString() }, { merge: true });
+      toast.success("Đã khóa / xóa tài khoản thành công. Tài khoản này không thể tự đăng nhập lại để được duyệt.");
       setDeleteData(null);
     } catch (err) {
       console.error(err);
@@ -933,6 +945,35 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                       {crumb.name}
                     </button>
                   </React.Fragment>
+                ))}
+              </div>
+
+              {/* Grade Filter Pills */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-gray-100 mt-2">
+                <span className="text-[11px] font-bold text-gray-500 mr-1">Lọc theo khối:</span>
+                {[
+                  { id: "10", label: "Lớp 10" },
+                  { id: "11", label: "Lớp 11" },
+                  { id: "12", label: "Lớp 12" },
+                  { id: "chung", label: "Khối chung" },
+                  { id: "all", label: "Tất cả khối" }
+                ].map(g => (
+                  <Button
+                    key={g.id}
+                    variant={selectedFolderGrade === g.id ? "default" : "outline"}
+                    size="sm"
+                    className={`h-7 px-3 text-xs font-bold rounded-lg transition-all ${
+                      selectedFolderGrade === g.id 
+                        ? "bg-blue-600 text-white shadow-xs" 
+                        : "border-gray-200 text-gray-600 hover:bg-blue-50 hover:text-blue-700"
+                    }`}
+                    onClick={() => {
+                      setSelectedFolderGrade(g.id);
+                      setCurrentFolderParentId(null);
+                    }}
+                  >
+                    📁 {g.label} {g.id === "10" && "(Mặc định)"}
+                  </Button>
                 ))}
               </div>
             </div>
@@ -1501,10 +1542,11 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className={`font-bold text-xs ${
                               u.role === "admin" ? "bg-purple-50 text-purple-700 border-purple-200" :
-                              u.role === "teacher" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                              u.role === "teacher" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                              u.role === "disabled" ? "bg-red-50 text-red-700 border-red-200" :
                               "bg-amber-50 text-amber-700 border-amber-200"
                             }`}>
-                              {u.role === "admin" ? "Quản trị viên" : u.role === "teacher" ? "Giáo viên" : "Chờ duyệt"}
+                              {u.role === "admin" ? "Quản trị viên" : u.role === "teacher" ? "Giáo viên (Đã duyệt)" : u.role === "disabled" ? "Đã khóa / Xóa" : "Chờ duyệt"}
                             </Badge>
                           </div>
                         </td>
@@ -1514,13 +1556,14 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end items-center gap-2">
                             <Select value={u.role} onValueChange={(val: any) => handleUpdateUserRole(u.uid, val)}>
-                              <SelectTrigger className="h-8 text-xs w-[130px] rounded-lg">
+                              <SelectTrigger className="h-8 text-xs w-[155px] rounded-lg">
                                 <SelectValue placeholder="Phân quyền" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="teacher">Giáo viên</SelectItem>
-                                <SelectItem value="admin">Quản trị viên</SelectItem>
+                                <SelectItem value="teacher">Giáo viên (Đã duyệt)</SelectItem>
                                 <SelectItem value="pending">Chờ duyệt</SelectItem>
+                                <SelectItem value="disabled">Đã khóa / Xóa</SelectItem>
+                                <SelectItem value="admin">Quản trị viên</SelectItem>
                               </SelectContent>
                             </Select>
                             <Button 
