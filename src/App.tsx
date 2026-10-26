@@ -97,20 +97,24 @@ export default function App() {
           
           if (userSnap.exists()) {
             const data = userSnap.data();
-            // Automatically upgrade pending users to teachers and admin user to admin
-            if ((isAdminUser && data.role !== "admin") || (!isAdminUser && data.role === "pending")) {
-              const updatedRole = isAdminUser ? "admin" : "teacher";
+            // If user has been disabled/deleted by Admin
+            if (data.role === "disabled" || data.disabled === true) {
+              setUserProfile({ ...data, role: "disabled", disabled: true });
+            } else if (isAdminUser && data.role !== "admin") {
+              const updatedRole = "admin";
               await setDoc(userDocRef, { ...data, role: updatedRole }, { merge: true });
               setUserProfile({ ...data, role: updatedRole });
             } else {
               setUserProfile(data);
             }
           } else {
+            // New user registration or account previously deleted by Admin
+            // Admin user becomes "admin", all other accounts start as "pending" for Admin approval
             const newProfile = {
               uid: user.uid,
               email: user.email || "",
               displayName: user.displayName || user.email?.split("@")[0] || "Giáo viên",
-              role: isAdminUser ? "admin" : "teacher",
+              role: isAdminUser ? "admin" : "pending",
               createdAt: new Date().toISOString()
             };
             await setDoc(userDocRef, newProfile);
@@ -118,12 +122,12 @@ export default function App() {
           }
         } catch (authDocErr) {
           console.error("Error setting up user profile in Firestore:", authDocErr);
-          // Set fallback profile in state so UI remains fully functional
+          // Set fallback profile in state so UI remains functional
           setUserProfile({
             uid: user.uid,
             email: user.email || "",
             displayName: user.displayName || user.email?.split("@")[0] || "Giáo viên",
-            role: user.email === "trieuhaminh@gmail.com" ? "admin" : "teacher",
+            role: user.email === "trieuhaminh@gmail.com" ? "admin" : "pending",
             createdAt: new Date().toISOString()
           });
         }
@@ -478,14 +482,22 @@ export default function App() {
                   <RotateCcw className="w-3 h-3" />
                   Xóa dữ liệu
                 </Button>
-                <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100">
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${
+                  userProfile?.role === "disabled" ? "bg-red-50 border-red-200 text-red-700" :
+                  userProfile?.role === "pending" ? "bg-amber-50 border-amber-200 text-amber-700" :
+                  "bg-blue-50 border-blue-100 text-blue-700"
+                }`}>
                   {userProfile?.role === "admin" ? (
-                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  ) : userProfile?.role === "disabled" ? (
+                    <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                  ) : userProfile?.role === "pending" ? (
+                    <Clock className="w-3.5 h-3.5 text-amber-600" />
                   ) : (
-                    <User className="w-3 h-3 text-blue-600" />
+                    <User className="w-3.5 h-3.5 text-blue-600" />
                   )}
-                  <span className="text-xs text-blue-700 max-w-[100px] truncate">
-                    {userProfile?.role === "pending" ? "[Chờ duyệt] " : ""}
+                  <span className="text-xs max-w-[130px] truncate font-semibold">
+                    {userProfile?.role === "disabled" ? "[Đã bị khóa/xóa] " : userProfile?.role === "pending" ? "[Chờ duyệt] " : ""}
                     {user.displayName || user.email}
                   </span>
                 </div>
@@ -515,6 +527,30 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8 md:py-12">
+        {userProfile?.role === "disabled" && (
+          <div className="bg-red-600 text-white p-4 rounded-2xl mb-6 flex items-start gap-3 shadow-md border border-red-700">
+            <AlertCircle className="w-6 h-6 shrink-0 mt-0.5 text-red-100" />
+            <div>
+              <h4 className="font-bold text-base">Tài khoản đã bị Quản trị viên khóa hoặc xóa</h4>
+              <p className="text-sm text-red-100 mt-1 leading-relaxed">
+                Tài khoản ({userProfile.email}) của bạn hiện ở trạng thái đã bị khóa/xóa bởi Admin. Bạn không có quyền truy cập tab Quản lý hay xuất bản đề thi mới. Vui lòng liên hệ Admin (trieuhaminh@gmail.com) nếu bạn cần hỗ trợ kích hoạt lại tài khoản.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {userProfile?.role === "pending" && (
+          <div className="bg-amber-500 text-white p-4 rounded-2xl mb-6 flex items-start gap-3 shadow-md border border-amber-600">
+            <Clock className="w-6 h-6 shrink-0 mt-0.5 text-amber-100" />
+            <div>
+              <h4 className="font-bold text-base">Tài khoản Giáo viên đang chờ duyệt</h4>
+              <p className="text-sm text-amber-100 mt-1 leading-relaxed">
+                Tài khoản ({userProfile.email}) của bạn đang nằm trong danh sách chờ duyệt bởi Quản trị viên. Sau khi Admin kích hoạt quyền Giáo viên, bạn có thể sử dụng đầy đủ các tính năng Quản lý thư mục, đề thi và xuất bản.
+              </p>
+            </div>
+          </div>
+        )}
+
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
           <div className="flex justify-center">
             <TabsList className="bg-white border border-gray-200 p-1 rounded-xl shadow-sm">
