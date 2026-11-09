@@ -64,6 +64,7 @@ export interface StudentAccount {
   teacherId: string;
   createdAt: string;
   mustChangePassword?: boolean; // Yêu cầu đổi mật khẩu lần đầu/sau khi reset
+  canViewHistory?: boolean; // Cho phép HS đăng nhập cổng tra cứu lịch sử & đề đã làm
 }
 
 export interface ExamResult {
