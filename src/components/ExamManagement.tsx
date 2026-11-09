@@ -55,6 +55,7 @@ import {
   DialogDescription,
   DialogFooter
 } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Exam, ExamResult, Folder, StudentAccount } from "@/types";
 import { saveAs } from "file-saver";
@@ -486,6 +487,39 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     } catch (err) {
       console.error(err);
       toast.error("Lỗi khi tạo tài khoản học sinh.");
+    }
+  };
+
+  const handleToggleStudentHistoryAccess = async (accId: string, currentStatus: boolean, studentName: string) => {
+    try {
+      const nextStatus = !currentStatus;
+      await updateDoc(doc(db, "studentAccounts", accId), {
+        canViewHistory: nextStatus
+      });
+      toast.success(nextStatus 
+        ? `Đã MỞ QUYỀN đăng nhập tra cứu lịch sử cho em ${studentName}!`
+        : `Đã KHÓA / ĐÓNG BĂNG quyền tra cứu lịch sử của em ${studentName}!`
+      );
+    } catch (err) {
+      console.error("Lỗi cập nhật quyền tra cứu HS:", err);
+      toast.error("Không thể cập nhật quyền tra cứu cho học sinh này.");
+    }
+  };
+
+  const handleBatchToggleHistoryAccess = async (enable: boolean) => {
+    if (filteredStudents.length === 0) return;
+    try {
+      const promises = filteredStudents.map(st => 
+        updateDoc(doc(db, "studentAccounts", st.id), { canViewHistory: enable })
+      );
+      await Promise.all(promises);
+      toast.success(enable 
+        ? `Đã MỞ QUYỀN đăng nhập tra cứu cho toàn bộ ${filteredStudents.length} học sinh đang hiển thị!`
+        : `Đã KHÓA / ĐÓNG BĂNG quyền tra cứu của toàn bộ ${filteredStudents.length} học sinh đang hiển thị!`
+      );
+    } catch (err) {
+      console.error(err);
+      toast.error("Lỗi khi cập nhật quyền hàng loạt.");
     }
   };
 
@@ -1305,7 +1339,15 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 onChange={(e) => setStudentSearch(e.target.value)}
               />
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
+              <Button onClick={() => handleBatchToggleHistoryAccess(true)} variant="outline" size="sm" className="border-blue-300 text-blue-700 hover:bg-blue-50 font-semibold gap-1.5 rounded-xl h-10 text-xs">
+                <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
+                Mở quyền tất cả ({filteredStudents.length})
+              </Button>
+              <Button onClick={() => handleBatchToggleHistoryAccess(false)} variant="outline" size="sm" className="border-gray-300 text-gray-700 hover:bg-gray-100 font-semibold gap-1.5 rounded-xl h-10 text-xs">
+                <Lock className="w-3.5 h-3.5 text-gray-500" />
+                Khóa tất cả
+              </Button>
               <Button onClick={handleDownloadCsvTemplate} variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 font-semibold gap-2 rounded-xl h-10">
                 <Download className="w-4 h-4" />
                 Tải file mẫu CSV
@@ -1331,76 +1373,101 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                     <th className="px-6 py-4 font-bold">Họ và tên</th>
                     <th className="px-6 py-4 font-bold">Lớp / Trường</th>
                     <th className="px-6 py-4 font-bold">Mật khẩu</th>
+                    <th className="px-6 py-4 font-bold text-center">
+                      <div className="flex flex-col items-center">
+                        <span>Tra cứu lịch sử đề</span>
+                        <span className="text-[10px] lowercase text-gray-400 font-normal">(bật/tắt theo HS)</span>
+                      </div>
+                    </th>
                     <th className="px-6 py-4 font-bold text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredStudents.slice((studentsPage - 1) * 15, studentsPage * 15).map((st) => (
-                    <tr key={st.id} className="hover:bg-blue-50/30 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="font-mono font-bold text-blue-900 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200 w-fit">
-                          {st.studentId}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="font-bold text-gray-900 text-base">{st.fullName}</div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1.5">
-                          <Badge variant="outline" className="text-xs font-semibold text-blue-700 bg-blue-50 border-blue-200">
-                            Lớp {st.studentClass}
-                          </Badge>
-                          {st.schoolName && (
-                            <Badge variant="outline" className="text-xs font-medium text-gray-700 bg-gray-50 border-gray-200">
-                              {st.schoolName}
-                            </Badge>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div className="font-mono text-xs text-gray-700 bg-gray-100 px-2.5 py-1 rounded-lg w-fit">
-                            •••••••• ({st.password})
+                  {filteredStudents.slice((studentsPage - 1) * 15, studentsPage * 15).map((st) => {
+                    const hasAccess = !!st.canViewHistory;
+                    return (
+                      <tr key={st.id} className="hover:bg-blue-50/30 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="font-mono font-bold text-blue-900 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200 w-fit">
+                            {st.studentId}
                           </div>
-                          {st.mustChangePassword && (
-                            <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-300 font-medium">
-                              Cần đổi MK
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="font-bold text-gray-900 text-base">{st.fullName}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-1.5">
+                            <Badge variant="outline" className="text-xs font-semibold text-blue-700 bg-blue-50 border-blue-200">
+                              Lớp {st.studentClass}
                             </Badge>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end gap-1.5">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="h-8 text-xs text-amber-700 border-amber-200 hover:bg-amber-50 gap-1.5 rounded-lg font-medium"
-                            onClick={() => {
-                              setResetStudentAccount(st);
-                              setResetNewPassword("123456");
-                              setResetRequireChange(true);
-                            }}
-                            title="Reset mật khẩu khi học sinh quên"
-                          >
-                            <Key className="w-3.5 h-3.5 text-amber-600" />
-                            Reset MK
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                            onClick={() => setDeleteData({ id: st.id, type: 'student' })}
-                            title="Xóa tài khoản"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                            {st.schoolName && (
+                              <Badge variant="outline" className="text-xs font-medium text-gray-700 bg-gray-50 border-gray-200">
+                                {st.schoolName}
+                              </Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="font-mono text-xs text-gray-700 bg-gray-100 px-2.5 py-1 rounded-lg w-fit">
+                              •••••••• ({st.password})
+                            </div>
+                            {st.mustChangePassword && (
+                              <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-300 font-medium">
+                                Cần đổi MK
+                              </Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <div className="inline-flex flex-col items-center gap-1.5">
+                            <div className="flex items-center gap-2">
+                              <Switch 
+                                checked={hasAccess} 
+                                onCheckedChange={() => handleToggleStudentHistoryAccess(st.id, hasAccess, st.fullName)}
+                              />
+                              <span className={`text-xs font-bold ${hasAccess ? 'text-emerald-700' : 'text-gray-400'}`}>
+                                {hasAccess ? "Hiện (Mở)" : "Ẩn (Khóa)"}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-gray-400">
+                              {hasAccess ? "Cho phép login tra cứu" : "Đóng băng nút login"}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-1.5">
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-8 text-xs text-amber-700 border-amber-200 hover:bg-amber-50 gap-1.5 rounded-lg font-medium"
+                              onClick={() => {
+                                setResetStudentAccount(st);
+                                setResetNewPassword("123456");
+                                setResetRequireChange(true);
+                              }}
+                              title="Reset mật khẩu khi học sinh quên"
+                            >
+                              <Key className="w-3.5 h-3.5 text-amber-600" />
+                              Reset MK
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                              onClick={() => setDeleteData({ id: st.id, type: 'student' })}
+                              title="Xóa tài khoản"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {filteredStudents.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-6 py-16 text-center text-gray-400">
+                      <td colSpan={6} className="px-6 py-16 text-center text-gray-400">
                         <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
                         <p className="font-medium text-gray-600">Chưa có tài khoản học sinh nào được cấp.</p>
                         <p className="text-xs text-gray-400 mt-1">Cấp tài khoản giúp học sinh đăng nhập chính xác, ngăn chặn tình trạng điền tên lung tung.</p>
