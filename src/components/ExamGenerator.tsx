@@ -980,7 +980,7 @@ export default function ExamGenerator({
             children.push(new Paragraph({
               children: [
                 new TextRun({ text: `${opt.id}. `, bold: true }),
-                new TextRun(opt.text)
+                ...parseMarkdownToRuns(opt.text)
               ],
               indent: { left: 720 },
               spacing: { after: 60 }
@@ -994,13 +994,33 @@ export default function ExamGenerator({
             children.push(new Paragraph({
               children: [
                 new TextRun({ text: `${label}) `, bold: true }),
-                new TextRun({ text: opt.text }),
+                ...parseMarkdownToRuns(opt.text),
                 new TextRun({ text: "\t\t(Đúng / Sai)", italics: true, color: "666666" })
               ],
               indent: { left: 720 },
               spacing: { after: 60 }
             }));
           });
+        }
+
+        if (q.type === "SA") {
+          children.push(new Paragraph({
+            children: [
+              new TextRun({ text: "Trả lời: .................................................................................................", italics: true, color: "666666" })
+            ],
+            indent: { left: 720 },
+            spacing: { before: 60, after: 120 }
+          }));
+        }
+
+        if (q.type === "ESSAY") {
+          children.push(new Paragraph({
+            children: [
+              new TextRun({ text: "Bài làm: .................................................................................................", italics: true, color: "666666" })
+            ],
+            indent: { left: 720 },
+            spacing: { before: 60, after: 160 }
+          }));
         }
       });
 

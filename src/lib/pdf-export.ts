@@ -1,7 +1,11 @@
 import { Exam, Question } from "@/types";
 
+/**
+ * Renders an Exam object into a self-contained, printable HTML document with KaTeX math rendering.
+ * Supports LaTeX math enclosed in $...$ (inline) and $$...$$ (display), plus clean Vietnamese typography.
+ */
 export function exportExamToPrintablePdf(exam: Exam, studentName?: string, studentClass?: string) {
-  // Format questions into HTML with clean typography, KaTeX and math rendering
+  // Format questions into HTML with math containers
   const questionsHtml = exam.questions.map((q, idx) => {
     let partLabel = "";
     if (idx === 0 || exam.questions[idx - 1]?.type !== q.type) {
@@ -21,7 +25,7 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
       contextHtml = `
         <div class="context-box">
           <strong>📖 Lời dẫn / Ngữ liệu chung:</strong>
-          <div>${escapeHtml(q.context)}</div>
+          <div class="math-content">${formatMathText(q.context)}</div>
         </div>
       `;
     }
@@ -32,7 +36,7 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
         <div class="options-grid">
           ${q.options.map(opt => `
             <div class="option-item">
-              <strong>${opt.id}.</strong> ${escapeHtml(opt.text)}
+              <strong class="option-label">${opt.id}.</strong> <span class="math-content">${formatMathText(opt.text)}</span>
             </div>
           `).join("")}
         </div>
@@ -42,7 +46,7 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
         <div class="tf-options">
           ${q.options.map((opt, oIdx) => `
             <div class="tf-row">
-              <span class="tf-label"><strong>${String.fromCharCode(97 + oIdx)})</strong> ${escapeHtml(opt.text)}</span>
+              <span class="tf-label"><strong>${String.fromCharCode(97 + oIdx)})</strong> <span class="math-content">${formatMathText(opt.text)}</span></span>
               <span class="tf-choice">[ &nbsp; ] Đúng &nbsp;&nbsp;&nbsp;&nbsp; [ &nbsp; ] Sai</span>
             </div>
           `).join("")}
@@ -67,7 +71,7 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
       ${contextHtml}
       <div class="question-item">
         <div class="question-header">
-          <strong>Câu ${idx + 1}:</strong> ${escapeHtml(q.content)}
+          <strong>Câu ${idx + 1}:</strong> <span class="math-content">${formatMathText(q.content)}</span>
           <span class="question-points">(${q.points || (q.type === "TF" ? 1.0 : 0.25)} đ)</span>
         </div>
         ${q.imageUrl ? `<div class="question-img"><img src="${q.imageUrl}" alt="Minh họa" /></div>` : ""}
@@ -82,54 +86,63 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
     <head>
       <meta charset="UTF-8">
       <title>${escapeHtml(exam.title)}</title>
+      
+      <!-- KaTeX stylesheet and scripts for full LaTeX math rendering -->
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+      <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+      <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+
       <style>
         @page {
           size: A4;
-          margin: 18mm 15mm 18mm 15mm;
+          margin: 15mm 15mm 15mm 15mm;
+        }
+        *, *::before, *::after {
+          box-sizing: border-box;
         }
         body {
-          font-family: "Times New Roman", Times, serif, "Segoe UI", Arial, sans-serif;
+          font-family: "Times New Roman", Times, "Cambria", serif;
           font-size: 13pt;
           line-height: 1.45;
           color: #000;
           background: #fff;
           margin: 0;
-          padding: 20px;
+          padding: 24px;
         }
         .header-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 15px;
+          margin-bottom: 12px;
           border-bottom: 2px solid #000;
-          padding-bottom: 10px;
+          padding-bottom: 8px;
         }
         .header-table td {
           vertical-align: top;
           padding: 2px 4px;
         }
         .school-name {
-          font-size: 12pt;
+          font-size: 11.5pt;
           font-weight: bold;
           text-align: center;
           text-transform: uppercase;
         }
         .exam-meta {
-          font-size: 11pt;
+          font-size: 10.5pt;
           text-align: center;
           font-style: italic;
+          margin-top: 2px;
         }
         .exam-title {
-          font-size: 15pt;
+          font-size: 14.5pt;
           font-weight: bold;
           text-align: center;
           text-transform: uppercase;
-          margin-top: 5px;
           color: #000;
         }
         .student-info-box {
-          border: 1px dashed #444;
-          padding: 8px 12px;
-          margin-bottom: 18px;
+          border: 1px dashed #333;
+          padding: 6px 12px;
+          margin-bottom: 16px;
           font-size: 11.5pt;
           display: flex;
           justify-content: space-between;
@@ -137,12 +150,12 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
         }
         .part-header {
           font-weight: bold;
-          font-size: 12.5pt;
-          margin-top: 18px;
+          font-size: 12pt;
+          margin-top: 16px;
           margin-bottom: 8px;
-          padding: 4px 6px;
-          background: #f0f0f0;
-          border-left: 4px solid #333;
+          padding: 4px 8px;
+          background: #f2f2f2;
+          border-left: 4px solid #111;
           page-break-after: avoid;
         }
         .context-box {
@@ -151,16 +164,15 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
           padding: 8px 12px;
           margin: 8px 0 12px 0;
           border-radius: 4px;
-          font-style: normal;
           page-break-inside: avoid;
         }
         .question-item {
-          margin-bottom: 14px;
+          margin-bottom: 12px;
           page-break-inside: avoid;
         }
         .question-header {
           font-size: 13pt;
-          margin-bottom: 6px;
+          margin-bottom: 4px;
         }
         .question-points {
           font-size: 11pt;
@@ -179,20 +191,25 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
         .options-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 6px 16px;
-          padding-left: 12px;
+          gap: 6px 20px;
+          padding-left: 14px;
           margin-top: 4px;
         }
         .option-item {
           font-size: 12.5pt;
         }
+        .option-label {
+          font-weight: bold;
+          margin-right: 4px;
+        }
         .tf-options {
-          padding-left: 12px;
+          padding-left: 14px;
           margin-top: 4px;
         }
         .tf-row {
           display: flex;
           justify-content: space-between;
+          align-items: center;
           padding: 4px 0;
           border-bottom: 1px dotted #ccc;
         }
@@ -201,10 +218,10 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
           font-weight: bold;
           font-size: 11pt;
           white-space: nowrap;
-          margin-left: 10px;
+          margin-left: 12px;
         }
         .sa-box {
-          padding-left: 12px;
+          padding-left: 14px;
           margin-top: 6px;
           font-size: 12pt;
         }
@@ -216,10 +233,13 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
         .footer-note {
           text-align: center;
           font-style: italic;
-          margin-top: 30px;
+          margin-top: 24px;
           padding-top: 10px;
           border-top: 1px solid #ccc;
           font-size: 11pt;
+        }
+        .katex {
+          font-size: 1.05em !important;
         }
         @media print {
           body {
@@ -234,12 +254,12 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
     <body>
       <table class="header-table">
         <tr>
-          <td style="width: 45%;">
+          <td style="width: 44%;">
             <div class="school-name">SỞ GD&ĐT / TRƯỜNG THPT</div>
             <div class="exam-meta">Năm học: 2025 - 2026</div>
             <div class="exam-meta">Mã đề: <strong>${escapeHtml(exam.id)}</strong></div>
           </td>
-          <td style="width: 55%;">
+          <td style="width: 56%;">
             <div class="exam-title">${escapeHtml(exam.title)}</div>
             <div class="exam-meta">Môn: <strong>${escapeHtml(exam.subject)}</strong> - Khối: <strong>${escapeHtml(exam.grade)}</strong></div>
             <div class="exam-meta">Thời gian làm bài: <strong>${exam.timeLimit} phút</strong> (không kể phát đề)</div>
@@ -263,11 +283,27 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
       </div>
 
       <script>
-        window.onload = function() {
-          setTimeout(function() {
-            window.print();
-          }, 300);
-        };
+        document.addEventListener("DOMContentLoaded", function() {
+          function renderMathAndPrint() {
+            if (window.renderMathInElement) {
+              window.renderMathInElement(document.body, {
+                delimiters: [
+                  { left: "$$", right: "$$", display: true },
+                  { left: "$", right: "$", display: false },
+                  { left: "\\\\(", right: "\\\\)", display: false },
+                  { left: "\\\\[", right: "\\\\]", display: true }
+                ],
+                throwOnError: false
+              });
+              setTimeout(function() {
+                window.print();
+              }, 400);
+            } else {
+              setTimeout(renderMathAndPrint, 50);
+            }
+          }
+          renderMathAndPrint();
+        });
       </script>
     </body>
     </html>
@@ -300,9 +336,34 @@ export function exportExamToPrintablePdf(exam: Exam, studentName?: string, stude
         setTimeout(() => {
           document.body.removeChild(iframe);
         }, 1000);
-      }, 500);
+      }, 1000);
     }
   }
+}
+
+/**
+ * Normalizes and formats text containing LaTeX math formulas.
+ * Preserves $...$ and $$...$$ tags untouched while escaping HTML in regular text.
+ */
+function formatMathText(text?: string): string {
+  if (!text) return "";
+  
+  // Split by $$...$$ and $...$
+  const regex = /(\$\$[\s\S]*?\$\$|\$[^\$]+?\$)/g;
+  const parts = text.split(regex);
+
+  return parts.map(part => {
+    if (part.startsWith("$$") && part.endsWith("$$")) {
+      // Display math: leave as $$...$$ so KaTeX auto-render can parse it
+      return part;
+    }
+    if (part.startsWith("$") && part.endsWith("$")) {
+      // Inline math: leave as $...$ so KaTeX auto-render can parse it
+      return part;
+    }
+    // Regular text: escape HTML and convert line breaks
+    return escapeHtml(part).replace(/\n/g, "<br />");
+  }).join("");
 }
 
 function escapeHtml(text: string): string {
