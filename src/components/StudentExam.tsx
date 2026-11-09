@@ -16,7 +16,8 @@ import {
   School,
   Lock,
   FileText,
-  Eye
+  Eye,
+  Download
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -37,6 +38,7 @@ import {
 } from "@/components/ui/dialog";
 import { db, doc, getDoc, addDoc, updateDoc, collection, query, where, getDocs, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { Exam, Question } from "@/types";
+import { exportExamToPrintablePdf } from "@/lib/pdf-export";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -71,6 +73,7 @@ export default function StudentExam() {
   const [selectedReviewResult, setSelectedReviewResult] = useState<any | null>(null);
   const [reviewExamData, setReviewExamData] = useState<Exam | null>(null);
   const [loadingReview, setLoadingReview] = useState(false);
+  const [historyAccessBlocked, setHistoryAccessBlocked] = useState(false);
 
   const fetchStudentHistory = async (acc: any) => {
     if (!acc || !acc.fullName) return;
@@ -124,6 +127,18 @@ export default function StudentExam() {
       });
 
       if (matchedAccount) {
+        // KIỂM TRA QUYỀN TRUY CẬP CỔNG LỊCH SỬ DO GIÁO VIÊN ĐIỀU PHỐI
+        if (matchedAccount.canViewHistory !== true) {
+          toast.error("Tài khoản của em hiện chưa được giáo viên mở quyền tra cứu lịch sử!", {
+            description: "Vui lòng liên hệ Giáo viên của bạn để được kích hoạt quyền truy cập.",
+            duration: 6000
+          });
+          setHistoryAccessBlocked(true);
+          setLoading(false);
+          return;
+        }
+
+        setHistoryAccessBlocked(false);
         if (matchedAccount.mustChangePassword) {
           setPendingStudentAccount({ ...matchedAccount, docId: matchedDocId });
           setNewPassInput("");
@@ -148,6 +163,41 @@ export default function StudentExam() {
   };
 
   const examCacheRef = useRef<Record<string, Exam>>({});
+  const [downloadingExamId, setDownloadingExamId] = useState<string | null>(null);
+
+  const handleDownloadExamPdf = async (examId: string, examTitle?: string) => {
+    if (!examId) return;
+    setDownloadingExamId(examId);
+    try {
+      let examObj: Exam | null = null;
+      if (examCacheRef.current[examId]) {
+        examObj = examCacheRef.current[examId];
+      } else {
+        const docRef = doc(db, "exams", examId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          examObj = docSnap.data() as Exam;
+          examCacheRef.current[examId] = examObj;
+        }
+      }
+
+      if (examObj) {
+        exportExamToPrintablePdf(
+          examObj, 
+          loggedInAccount?.fullName || studentName, 
+          loggedInAccount?.studentClass || studentClass
+        );
+        toast.success(`Đang mở bản in/tải PDF đề "${examObj.title}" để em làm lại!`);
+      } else {
+        toast.error(`Không tìm thấy dữ liệu đề thi gốc ${examTitle || examId}.`);
+      }
+    } catch (err) {
+      console.error("Lỗi tải PDF đề thi:", err);
+      toast.error("Lỗi khi tạo file PDF đề thi.");
+    } finally {
+      setDownloadingExamId(null);
+    }
+  };
 
   const handleOpenReviewModal = async (resultItem: any) => {
     setSelectedReviewResult(resultItem);
@@ -1071,18 +1121,39 @@ export default function StudentExam() {
               <CardContent className="p-6 space-y-6">
                 {/* TOP BOX: Student Login or Basic Info */}
                 {!loggedInAccount ? (
-                  <div className="p-5 bg-indigo-50/70 rounded-2xl border border-indigo-100 space-y-4">
-                    <div className="flex items-center gap-2 text-indigo-950 font-bold text-sm">
-                      <Lock className="w-4 h-4 text-indigo-600" />
-                      <span>Đăng nhập Cổng Học sinh</span>
+                  <div className={`p-5 rounded-2xl border space-y-4 transition-all ${historyAccessBlocked ? 'bg-amber-50/90 border-amber-300' : 'bg-indigo-50/70 border-indigo-100'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-indigo-950 font-bold text-sm">
+                        <Lock className="w-4 h-4 text-indigo-600" />
+                        <span>Đăng nhập Cổng Học sinh</span>
+                      </div>
+                      {historyAccessBlocked && (
+                        <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300">
+                          Chưa được cấp quyền
+                        </span>
+                      )}
                     </div>
+                    
+                    {historyAccessBlocked && (
+                      <div className="p-3 bg-amber-100/90 rounded-xl border border-amber-300 text-xs text-amber-950 flex items-start gap-2 leading-relaxed">
+                        <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                        <div>
+                          <strong>Chức năng tra cứu đang bị đóng băng:</strong>
+                          <p className="mt-0.5">Tài khoản của em hiện chưa được giáo viên bật quyền truy cập xem lại lịch sử đề thi. Em vui lòng <strong>liên hệ Giáo viên của bạn</strong> để được mở quyền.</p>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <Label className="text-xs font-bold text-gray-700">Mã học sinh (Mã HS)</Label>
                         <Input 
                           placeholder="Mã HS (HS1201...)" 
                           value={loginStudentId}
-                          onChange={(e) => setLoginStudentId(e.target.value)}
+                          onChange={(e) => {
+                            setLoginStudentId(e.target.value);
+                            if (historyAccessBlocked) setHistoryAccessBlocked(false);
+                          }}
                           className="h-10 rounded-xl font-mono font-bold text-sm bg-white"
                         />
                       </div>
@@ -1092,18 +1163,49 @@ export default function StudentExam() {
                           type="password"
                           placeholder="Mật khẩu..." 
                           value={loginPassword}
-                          onChange={(e) => setLoginPassword(e.target.value)}
+                          onChange={(e) => {
+                            setLoginPassword(e.target.value);
+                            if (historyAccessBlocked) setHistoryAccessBlocked(false);
+                          }}
                           className="h-10 rounded-xl text-sm bg-white"
                         />
                       </div>
                     </div>
-                    <Button 
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold h-10 rounded-xl text-sm shadow-md shadow-indigo-100"
-                      onClick={handlePortalLogin}
-                      disabled={loading}
-                    >
-                      {loading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Đăng nhập tra cứu lịch sử"}
-                    </Button>
+
+                    <div className="space-y-2">
+                      <Button 
+                        className={`w-full font-bold h-10 rounded-xl text-sm shadow-md transition-all ${
+                          historyAccessBlocked 
+                            ? 'bg-gray-400 hover:bg-gray-500 text-white cursor-not-allowed opacity-90' 
+                            : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100'
+                        }`}
+                        onClick={() => {
+                          if (historyAccessBlocked) {
+                            toast.warning("Chức năng tra cứu đang bị khóa. Hãy liên hệ Giáo viên của bạn để được mở quyền!");
+                            return;
+                          }
+                          handlePortalLogin();
+                        }}
+                        disabled={loading}
+                      >
+                        {loading ? (
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                        ) : historyAccessBlocked ? (
+                          <>
+                            <Lock className="w-4 h-4 mr-2" />
+                            Đã đóng băng (Liên hệ GV của bạn)
+                          </>
+                        ) : (
+                          "Đăng nhập tra cứu lịch sử"
+                        )}
+                      </Button>
+                      
+                      {historyAccessBlocked && (
+                        <p className="text-[11px] text-center text-amber-800 font-semibold italic">
+                          * Nút đăng nhập đang tạm đóng băng. Hãy liên hệ GV của bạn để được kích hoạt.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="p-5 bg-gradient-to-r from-blue-50/80 via-indigo-50/60 to-purple-50/40 rounded-2xl border border-indigo-100 shadow-xs space-y-3">
@@ -1182,6 +1284,7 @@ export default function StudentExam() {
                             <th className="py-2.5 px-3 w-12 text-center">STT</th>
                             <th className="py-2.5 px-3">Tên đề thi</th>
                             <th className="py-2.5 px-3 text-center">Điểm số</th>
+                            <th className="py-2.5 px-3 text-center">Tải PDF làm lại</th>
                             <th className="py-2.5 px-3 text-center">Xem lại</th>
                           </tr>
                         </thead>
@@ -1197,6 +1300,23 @@ export default function StudentExam() {
                               </td>
                               <td className="py-3 px-3 text-center font-black text-sm text-blue-600">
                                 {typeof r.score === "number" ? r.score.toFixed(1) : r.score}
+                              </td>
+                              <td className="py-3 px-3 text-center">
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-8 px-2.5 text-xs font-bold text-emerald-700 hover:bg-emerald-600 hover:text-white border-emerald-300 rounded-lg gap-1 transition-all"
+                                  onClick={() => handleDownloadExamPdf(r.examId, r.examTitle)}
+                                  disabled={downloadingExamId === r.examId}
+                                  title="Tải hoặc in đề thi PDF để làm lại"
+                                >
+                                  {downloadingExamId === r.examId ? (
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Download className="w-3.5 h-3.5 text-emerald-600" />
+                                  )}
+                                  <span>Tải PDF</span>
+                                </Button>
                               </td>
                               <td className="py-3 px-3 text-center">
                                 <Button 
@@ -1429,7 +1549,19 @@ export default function StudentExam() {
             )}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex flex-col sm:flex-row justify-between items-center gap-2">
+            {reviewExamData && (
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="w-full sm:w-auto border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-bold gap-1.5"
+                onClick={() => handleDownloadExamPdf(reviewExamData.id, reviewExamData.title)}
+                disabled={downloadingExamId === reviewExamData.id}
+              >
+                {downloadingExamId === reviewExamData.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4 text-emerald-600" />}
+                <span>Tải đề PDF để làm lại</span>
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setSelectedReviewResult(null)}>Đóng</Button>
           </DialogFooter>
         </DialogContent>
