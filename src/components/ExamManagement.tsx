@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { 
   FileText, 
   Users, 
@@ -8,6 +8,7 @@ import {
   Search, 
   Filter,
   UserPlus,
+  UserCheck,
   Shield,
   User as UserIcon,
   Clock,
@@ -30,7 +31,8 @@ import {
   Key,
   BookOpen,
   CheckCircle2,
-  RefreshCw
+  RefreshCw,
+  X
 } from "lucide-react";
 import { db, collection, onSnapshot, query, where, doc, getDoc, deleteDoc, updateDoc, setDoc, auth, getDocs } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -89,8 +91,14 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
 
   const [examSearch, setExamSearch] = useState("");
   const [selectedFolderId, setSelectedFolderId] = useState<string>("all");
-  const [activeTab, setActiveTab] = useState("exams");
+  const [activeTab, setActiveTab] = useState(() => userProfile?.role === "admin" ? "users" : "exams");
+  const hasAutoSelectedAdminTabRef = useRef(false);
   const [userSearch, setUserSearch] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState<"all" | "teacher" | "pending" | "admin" | "disabled">("all");
+  const [userSortBy, setUserSortBy] = useState<"newest" | "exams" | "students" | "results" | "name">("newest");
+  const [selectedTeacherUid, setSelectedTeacherUid] = useState<string>("all");
+  const [inspectTeacherUid, setInspectTeacherUid] = useState<string | null>(null);
+  const [inspectTeacherTab, setInspectTeacherTab] = useState<"exams" | "students" | "folders" | "results">("exams");
   const [resultSearch, setResultSearch] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
 
@@ -103,6 +111,13 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
   const [viewResult, setViewResult] = useState<ExamResult | null>(null);
   const [deleteData, setDeleteData] = useState<{ id: string, type: 'exam' | 'result' | 'folder' | 'student' | 'user' } | null>(null);
+
+  useEffect(() => {
+    if (userProfile?.role === "admin" && !hasAutoSelectedAdminTabRef.current) {
+      hasAutoSelectedAdminTabRef.current = true;
+      setActiveTab("users");
+    }
+  }, [userProfile?.role]);
 
   // Full Exam Review state for Result Modal
   const [reviewExamData, setReviewExamData] = useState<Exam | null>(null);
@@ -181,10 +196,18 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [resultsPage, setResultsPage] = useState(1);
   const [usersPage, setUsersPage] = useState(1);
 
-  useEffect(() => { setExamsPage(1); }, [examSearch, selectedFolderId]);
-  useEffect(() => { setStudentsPage(1); }, [studentSearch]);
-  useEffect(() => { setResultsPage(1); }, [resultSearch, selectedExamId, selectedClass]);
-  useEffect(() => { setUsersPage(1); }, [userSearch]);
+  useEffect(() => { setExamsPage(1); }, [examSearch, selectedFolderId, selectedTeacherUid]);
+  useEffect(() => { setStudentsPage(1); }, [studentSearch, selectedTeacherUid]);
+  useEffect(() => { setResultsPage(1); }, [resultSearch, selectedExamId, selectedClass, selectedTeacherUid]);
+  useEffect(() => { setUsersPage(1); }, [userSearch, userRoleFilter, userSortBy]);
+
+  useEffect(() => {
+    setSelectedFolderId("all");
+    setCurrentFolderParentId(null);
+    setSelectedExamId("all");
+    setSelectedSchool("all");
+    setSelectedClass("all");
+  }, [selectedTeacherUid]);
 
   // Folder creation modal state
   const [showFolderModal, setShowFolderModal] = useState(false);
@@ -194,11 +217,28 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [currentFolderParentId, setCurrentFolderParentId] = useState<string | null>(null);
   const [selectedFolderGrade, setSelectedFolderGrade] = useState<string>("10"); // Default Khối 10
 
+  const isAdmin = userProfile?.role === "admin";
+
+  const scopedExams = useMemo(() => {
+    if (!isAdmin || selectedTeacherUid === "all") return exams;
+    return exams.filter(e => e.teacherId === selectedTeacherUid);
+  }, [exams, isAdmin, selectedTeacherUid]);
+
+  const scopedFolders = useMemo(() => {
+    if (!isAdmin || selectedTeacherUid === "all") return folders;
+    return folders.filter(f => f.teacherId === selectedTeacherUid);
+  }, [folders, isAdmin, selectedTeacherUid]);
+
+  const scopedStudents = useMemo(() => {
+    if (!isAdmin || selectedTeacherUid === "all") return studentAccounts;
+    return studentAccounts.filter(s => s.teacherId === selectedTeacherUid);
+  }, [studentAccounts, isAdmin, selectedTeacherUid]);
+
   const getBreadcrumbs = (folderId: string | null) => {
     const crumbs: Folder[] = [];
     let currId = folderId;
     while (currId) {
-      const f = folders.find(x => x.id === currId);
+      const f = scopedFolders.find(x => x.id === currId);
       if (f) {
         crumbs.unshift(f);
         currId = f.parentId || null;
@@ -209,7 +249,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     return crumbs;
   };
 
-  const currentLevelFolders = folders.filter(f => {
+  const currentLevelFolders = scopedFolders.filter(f => {
     if (currentFolderParentId === null) {
       const isRoot = !f.parentId || f.parentId === "none";
       if (!isRoot) return false;
@@ -219,7 +259,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     return f.parentId === currentFolderParentId;
   });
 
-  const currentLevelExams = exams.filter(e => {
+  const currentLevelExams = scopedExams.filter(e => {
     if (currentFolderParentId === null) {
       const isRoot = !e.folderId || e.folderId === "none";
       if (!isRoot) return false;
@@ -635,7 +675,144 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     toast.success("Đã sao chép link đề thi cho học sinh!");
   };
 
-  const filteredExams = exams.filter(e => {
+  // Build fast lookup maps for Admin (GV tổng) per-teacher analytics
+  const usersByUid = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    users.forEach(u => map.set(u.uid, u));
+    return map;
+  }, [users]);
+
+  const examById = useMemo(() => {
+    const map = new Map<string, Exam>();
+    exams.forEach(e => map.set(e.id, e));
+    return map;
+  }, [exams]);
+
+  const getTeacherInfo = (teacherId?: string) => {
+    if (!teacherId || teacherId === "current-user" || teacherId === "guest") {
+      return { name: "Chưa gán GV", email: "" };
+    }
+    const found = usersByUid.get(teacherId);
+    if (found) {
+      return {
+        name: found.displayName || found.email.split("@")[0],
+        email: found.email
+      };
+    }
+    return { name: "GV khác / Đã gỡ", email: teacherId.slice(0, 8) };
+  };
+
+  interface TeacherStat {
+    user: UserProfile;
+    exams: Exam[];
+    publishedExamsCount: number;
+    draftExamsCount: number;
+    folders: Folder[];
+    students: StudentAccount[];
+    studentsHistoryOpenCount: number;
+    results: ExamResult[];
+    avgScore: number | null;
+    lastActivityAt: string | null;
+  }
+
+  const teacherStatsMap = useMemo(() => {
+    const map = new Map<string, TeacherStat>();
+    users.forEach(u => {
+      map.set(u.uid, {
+        user: u,
+        exams: [],
+        publishedExamsCount: 0,
+        draftExamsCount: 0,
+        folders: [],
+        students: [],
+        studentsHistoryOpenCount: 0,
+        results: [],
+        avgScore: null,
+        lastActivityAt: u.createdAt || null
+      });
+    });
+
+    exams.forEach(ex => {
+      const stat = map.get(ex.teacherId);
+      if (stat) {
+        stat.exams.push(ex);
+        if (ex.status === "published") stat.publishedExamsCount += 1;
+        else stat.draftExamsCount += 1;
+        if (ex.createdAt && (!stat.lastActivityAt || new Date(ex.createdAt) > new Date(stat.lastActivityAt))) {
+          stat.lastActivityAt = ex.createdAt;
+        }
+      }
+    });
+
+    folders.forEach(fd => {
+      const stat = map.get(fd.teacherId);
+      if (stat) {
+        stat.folders.push(fd);
+      }
+    });
+
+    studentAccounts.forEach(st => {
+      const stat = map.get(st.teacherId);
+      if (stat) {
+        stat.students.push(st);
+        if (st.canViewHistory) stat.studentsHistoryOpenCount += 1;
+        if (st.createdAt && (!stat.lastActivityAt || new Date(st.createdAt) > new Date(stat.lastActivityAt))) {
+          stat.lastActivityAt = st.createdAt;
+        }
+      }
+    });
+
+    results.forEach(res => {
+      const ownerId = res.teacherId || examById.get(res.examId)?.teacherId;
+      if (ownerId) {
+        const stat = map.get(ownerId);
+        if (stat) {
+          stat.results.push(res);
+          if (res.submittedAt && (!stat.lastActivityAt || new Date(res.submittedAt) > new Date(stat.lastActivityAt))) {
+            stat.lastActivityAt = res.submittedAt;
+          }
+        }
+      }
+    });
+
+    map.forEach(stat => {
+      if (stat.results.length > 0) {
+        const totalScore = stat.results.reduce((sum, r) => sum + (Number(r.score) || 0), 0);
+        stat.avgScore = totalScore / stat.results.length;
+      }
+    });
+
+    return map;
+  }, [users, exams, folders, studentAccounts, results, examById]);
+
+  const systemSummary = useMemo(() => {
+    const activeTeachersCount = users.filter(u => u.role === "teacher" || u.role === "admin").length;
+    const pendingUsersCount = users.filter(u => u.role === "pending").length;
+    const disabledUsersCount = users.filter(u => u.role === "disabled").length;
+    const publishedExams = exams.filter(e => e.status === "published").length;
+    const draftExams = exams.length - publishedExams;
+    const historyOpenStudents = studentAccounts.filter(s => !!s.canViewHistory).length;
+    const systemAvgScore = results.length > 0
+      ? (results.reduce((acc, r) => acc + (Number(r.score) || 0), 0) / results.length).toFixed(2)
+      : null;
+
+    return {
+      totalUsers: users.length,
+      activeTeachersCount,
+      pendingUsersCount,
+      disabledUsersCount,
+      totalExams: exams.length,
+      publishedExams,
+      draftExams,
+      totalFolders: folders.length,
+      totalStudents: studentAccounts.length,
+      historyOpenStudents,
+      totalResults: results.length,
+      systemAvgScore
+    };
+  }, [users, exams, folders, studentAccounts, results]);
+
+  const filteredExams = scopedExams.filter(e => {
     if (selectedFolderId !== "all" && e.folderId !== selectedFolderId) {
       return false;
     }
@@ -646,23 +823,102 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     return true;
   });
 
-  const filteredStudents = studentAccounts.filter(s => {
+  const filteredStudents = scopedStudents.filter(s => {
     if (!studentSearch.trim()) return true;
     const q = studentSearch.toLowerCase();
     return s.fullName.toLowerCase().includes(q) || s.studentId.toLowerCase().includes(q) || s.studentClass.toLowerCase().includes(q) || (s.schoolName && s.schoolName.toLowerCase().includes(q));
   });
 
-  const filteredUsers = users.filter(u => 
-    u.email.toLowerCase().includes(userSearch.toLowerCase()) || 
-    (u.displayName && u.displayName.toLowerCase().includes(userSearch.toLowerCase()))
-  );
+  const filteredUsers = useMemo(() => {
+    const base = users.filter(u => {
+      if (userRoleFilter !== "all" && u.role !== userRoleFilter) return false;
+      if (userSearch.trim()) {
+        const q = userSearch.toLowerCase().trim();
+        const matchEmail = u.email.toLowerCase().includes(q);
+        const matchName = (u.displayName || "").toLowerCase().includes(q);
+        const matchUid = u.uid.toLowerCase().includes(q);
+        if (!matchEmail && !matchName && !matchUid) return false;
+      }
+      return true;
+    });
 
-  const teacherExamIds = new Set(exams.map(e => e.id));
+    return [...base].sort((a, b) => {
+      const statA = teacherStatsMap.get(a.uid);
+      const statB = teacherStatsMap.get(b.uid);
+      if (userSortBy === "exams") {
+        return (statB?.exams.length || 0) - (statA?.exams.length || 0);
+      }
+      if (userSortBy === "students") {
+        return (statB?.students.length || 0) - (statA?.students.length || 0);
+      }
+      if (userSortBy === "results") {
+        return (statB?.results.length || 0) - (statA?.results.length || 0);
+      }
+      if (userSortBy === "name") {
+        const nameA = a.displayName || a.email;
+        const nameB = b.displayName || b.email;
+        return nameA.localeCompare(nameB, "vi");
+      }
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+    });
+  }, [users, userRoleFilter, userSearch, userSortBy, teacherStatsMap]);
 
-  // Accessible results based on role
-  const userAccessibleResults = results.filter(r => 
-    userProfile?.role === "admin" || teacherExamIds.has(r.examId)
-  );
+  const handleExportTeachersCsv = () => {
+    if (filteredUsers.length === 0) {
+      toast.error("Không có dữ liệu giáo viên để xuất.");
+      return;
+    }
+    const escapeCsv = (val: any) => {
+      const str = String(val ?? "");
+      if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+    const roleLabelMap: Record<string, string> = {
+      admin: "GV tổng (Admin)",
+      teacher: "Giáo viên (Đã duyệt)",
+      pending: "Chờ duyệt",
+      disabled: "Đã khóa / Xóa"
+    };
+    const headers = [
+      "STT", "Họ và tên", "Email", "Vai trò", "Tổng số đề", "Đề đã xuất bản", "Đề nháp", "Số thư mục", "Tổng số TK HS", "HS đang mở tra cứu", "Lượt HS nộp bài", "Điểm trung bình", "Ngày tham gia"
+    ];
+    const rows = filteredUsers.map((u, idx) => {
+      const st = teacherStatsMap.get(u.uid);
+      return [
+        idx + 1,
+        escapeCsv(u.displayName || u.email.split("@")[0]),
+        escapeCsv(u.email),
+        escapeCsv(roleLabelMap[u.role] || u.role),
+        st?.exams.length || 0,
+        st?.publishedExamsCount || 0,
+        st?.draftExamsCount || 0,
+        st?.folders.length || 0,
+        st?.students.length || 0,
+        st?.studentsHistoryOpenCount || 0,
+        st?.results.length || 0,
+        st?.avgScore !== null && st?.avgScore !== undefined ? st.avgScore.toFixed(2) : "—",
+        u.createdAt ? new Date(u.createdAt).toLocaleDateString("vi-VN") : "N/A"
+      ].join(",");
+    });
+    const csvContent = "\uFEFF" + headers.join(",") + "\n" + rows.join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    saveAs(blob, `ThongKe_GiaoVien_${new Date().toISOString().slice(0, 10)}.csv`);
+    toast.success("Đã xuất báo cáo thống kê tài khoản giáo viên!");
+  };
+
+  const teacherExamIds = new Set(scopedExams.map(e => e.id));
+
+  // Accessible results based on role and admin teacher scope
+  const userAccessibleResults = results.filter(r => {
+    if (isAdmin) {
+      if (selectedTeacherUid === "all") return true;
+      const ownerId = r.teacherId || examById.get(r.examId)?.teacherId;
+      return ownerId === selectedTeacherUid;
+    }
+    return teacherExamIds.has(r.examId);
+  });
 
   // 1. Dynamic Available Schools (depends on current selectedExamId & selectedClass)
   const availableSchoolsMap = new Map<string, number>();
@@ -701,7 +957,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const activeExamsList: { id: string; title: string; subject: string; count: number }[] = [];
   const otherExamsList: { id: string; title: string; subject: string; count: number }[] = [];
 
-  exams.forEach(ex => {
+  scopedExams.forEach(ex => {
     const count = activeExamsMap.get(ex.id) || 0;
     if (count > 0) {
       activeExamsList.push({ id: ex.id, title: ex.title, subject: ex.subject, count });
@@ -710,9 +966,9 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     }
   });
 
-  // Catch any orphan result examId not present in `exams` state
+  // Catch any orphan result examId not present in `scopedExams` state
   activeExamsMap.forEach((count, examId) => {
-    if (!exams.some(e => e.id === examId)) {
+    if (!scopedExams.some(e => e.id === examId)) {
       const sampleRes = userAccessibleResults.find(r => r.examId === examId);
       activeExamsList.push({
         id: examId,
@@ -882,41 +1138,123 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
 
   if (!userProfile) return null;
 
+  const activeScopedTeacher = isAdmin && selectedTeacherUid !== "all" ? teacherStatsMap.get(selectedTeacherUid) : null;
+  const inspectTeacherStat = inspectTeacherUid ? teacherStatsMap.get(inspectTeacherUid) : null;
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Quản lý hệ thống</h2>
-          <p className="text-gray-500 text-sm">
-            {userProfile.role === "admin" ? "Quản trị viên toàn hệ thống" : "Quản lý thư mục, đề thi và tài khoản học sinh"}
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Quản lý hệ thống</h2>
+          <p className="text-slate-500 text-sm">
+            {isAdmin
+              ? "GV tổng (Admin) — Giám sát tài khoản giáo viên, số đề thi, tài khoản học sinh và kết quả toàn hệ thống"
+              : "Quản lý thư mục, đề thi và tài khoản học sinh"}
           </p>
         </div>
+
+        {isAdmin && (
+          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+            {systemSummary.pendingUsersCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setUserRoleFilter("pending");
+                  setActiveTab("users");
+                }}
+                className="h-10 px-3.5 rounded-xl border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 font-semibold text-xs gap-1.5 whitespace-nowrap shrink-0"
+              >
+                <Clock className="w-4 h-4 text-amber-600" />
+                {systemSummary.pendingUsersCount} GV chờ duyệt
+              </Button>
+            )}
+            <div className="w-full sm:w-[310px]">
+              <Select value={selectedTeacherUid} onValueChange={setSelectedTeacherUid}>
+                <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 text-xs sm:text-sm font-medium">
+                  <Shield className="w-4 h-4 mr-2 text-blue-600 shrink-0" />
+                  <SelectValue placeholder="Phạm vi xem (GV tổng)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    Toàn hệ thống ({users.length} GV · {exams.length} đề · {studentAccounts.length} HS)
+                  </SelectItem>
+                  {users.map((u) => {
+                    const st = teacherStatsMap.get(u.uid);
+                    const name = u.displayName || u.email.split("@")[0];
+                    return (
+                      <SelectItem key={u.uid} value={u.uid}>
+                        {name} ({st?.exams.length || 0} đề · {st?.students.length || 0} HS)
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
       </div>
+
+      {isAdmin && activeScopedTeacher && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 bg-blue-50/70 border border-blue-200 rounded-xl text-sm">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-800">
+            <span className="font-semibold text-blue-900">
+              Đang lọc theo GV: {activeScopedTeacher.user.displayName || activeScopedTeacher.user.email}
+            </span>
+            <span className="text-slate-400">·</span>
+            <span className="text-xs font-mono text-slate-600">{activeScopedTeacher.user.email}</span>
+            <span className="text-slate-400">·</span>
+            <span className="text-xs text-slate-600 tabular-nums">
+              {activeScopedTeacher.exams.length} đề thi · {activeScopedTeacher.folders.length} thư mục · {activeScopedTeacher.students.length} TK học sinh · {activeScopedTeacher.results.length} lượt nộp
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 px-3 text-xs rounded-lg border-blue-300 bg-white text-blue-700 hover:bg-blue-50 whitespace-nowrap"
+              onClick={() => setInspectTeacherUid(activeScopedTeacher.user.uid)}
+            >
+              <Eye className="w-3.5 h-3.5 mr-1.5" />
+              Hồ sơ chi tiết GV
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2.5 text-xs rounded-lg text-slate-700 hover:bg-blue-100 whitespace-nowrap"
+              onClick={() => setSelectedTeacherUid("all")}
+            >
+              <X className="w-3.5 h-3.5 mr-1" />
+              Xem toàn hệ thống
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="bg-white border border-gray-200 p-1 rounded-lg shadow-sm mb-6 flex flex-wrap h-auto gap-1">
-          <TabsTrigger value="exams" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+          {isAdmin && (
+            <TabsTrigger value="users" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
+              <Shield className="w-4 h-4 mr-2" />
+              Quản lý GV ({users.length})
+            </TabsTrigger>
+          )}
+          <TabsTrigger value="exams" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
             <FileText className="w-4 h-4 mr-2" />
-            Đề thi ({exams.length})
+            Đề thi ({scopedExams.length})
           </TabsTrigger>
-          <TabsTrigger value="folders" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+          <TabsTrigger value="folders" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
             <FolderIcon className="w-4 h-4 mr-2" />
-            Thư mục ({folders.length})
+            Thư mục ({scopedFolders.length})
           </TabsTrigger>
-          <TabsTrigger value="students" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+          <TabsTrigger value="students" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
             <Users className="w-4 h-4 mr-2" />
-            Tài khoản HS ({studentAccounts.length})
+            Tài khoản HS ({scopedStudents.length})
           </TabsTrigger>
-          <TabsTrigger value="results" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
+          <TabsTrigger value="results" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
             <Trophy className="w-4 h-4 mr-2" />
             Kết quả ({filteredResults.length})
           </TabsTrigger>
-          {userProfile.role === "admin" && (
-            <TabsTrigger value="users" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all">
-              <Shield className="w-4 h-4 mr-2" />
-              Người dùng ({users.length})
-            </TabsTrigger>
-          )}
         </TabsList>
 
         {/* --- EXAMS TAB --- */}
@@ -938,8 +1276,8 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                   <SelectValue placeholder="Lọc theo thư mục" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Tất cả thư mục ({exams.length})</SelectItem>
-                  {folders.map(f => (
+                  <SelectItem value="all">Tất cả thư mục ({scopedExams.length})</SelectItem>
+                  {scopedFolders.map(f => (
                     <SelectItem key={f.id} value={f.id}>
                       📁 {f.name} (Khối {f.grade || "N/A"})
                     </SelectItem>
@@ -1005,10 +1343,16 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                         <Edit3 className="w-3.5 h-3.5" />
                       </Button>
                     </div>
-                    <CardDescription className="flex items-center gap-2 text-xs">
+                    <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
                       <span>Lớp {exam.grade}</span>
-                      <span>•</span>
+                      <span>·</span>
                       <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {exam.timeLimit} phút</span>
+                      {isAdmin && (
+                        <>
+                          <span>·</span>
+                          <span className="text-slate-600 font-medium">GV: {getTeacherInfo(exam.teacherId).name}</span>
+                        </>
+                      )}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pb-4 space-y-3">
@@ -1165,8 +1509,8 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {currentLevelFolders.map(folder => {
-                  const countExams = exams.filter(e => e.folderId === folder.id).length;
-                  const subFoldersCount = folders.filter(f => f.parentId === folder.id).length;
+                  const countExams = scopedExams.filter(e => e.folderId === folder.id).length;
+                  const subFoldersCount = scopedFolders.filter(f => f.parentId === folder.id).length;
                   return (
                     <Card key={folder.id} className="border border-blue-100 shadow-sm hover:shadow-md transition-all bg-white group hover:border-blue-300">
                       <CardHeader className="pb-3">
@@ -1187,7 +1531,8 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                           📁 {folder.name}
                         </CardTitle>
                         <CardDescription className="text-xs pt-1">
-                          {subFoldersCount} thư mục con • {countExams} đề thi
+                          {subFoldersCount} thư mục con · {countExams} đề thi
+                          {isAdmin && ` · GV: ${getTeacherInfo(folder.teacherId).name}`}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="pt-1">
@@ -1269,10 +1614,16 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                             <Edit3 className="w-3.5 h-3.5" />
                           </Button>
                         </div>
-                        <CardDescription className="flex items-center gap-2 text-xs">
+                        <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
                           <span>Lớp {exam.grade}</span>
-                          <span>•</span>
+                          <span>·</span>
                           <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {exam.timeLimit} phút</span>
+                          {isAdmin && (
+                            <>
+                              <span>·</span>
+                              <span className="text-slate-600 font-medium">GV: {getTeacherInfo(exam.teacherId).name}</span>
+                            </>
+                          )}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="pb-4 space-y-3">
@@ -1394,6 +1745,11 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                         </td>
                         <td className="px-6 py-4">
                           <div className="font-bold text-gray-900 text-base">{st.fullName}</div>
+                          {isAdmin && (
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              GV tạo: <span className="font-medium text-slate-700">{getTeacherInfo(st.teacherId).name}</span>
+                            </div>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-wrap gap-1.5">
@@ -1670,7 +2026,14 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                         </td>
                         <td className="px-5 py-4">
                           <div className="font-semibold text-gray-900 line-clamp-1">{res.examTitle}</div>
-                          <div className="text-xs text-gray-400 font-mono mt-0.5">Mã: {res.examId}</div>
+                          <div className="text-xs text-gray-400 font-mono mt-0.5">
+                            Mã: {res.examId}
+                            {isAdmin && (
+                              <span className="font-sans text-slate-500 ml-2">
+                                · GV: {getTeacherInfo(res.teacherId || examById.get(res.examId)?.teacherId).name}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-5 py-4 text-center">
                           <div className="inline-flex flex-col items-center">
@@ -1728,88 +2091,256 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
           </div>
         </TabsContent>
 
-        {userProfile.role === "admin" && (
-          <TabsContent value="users" className="space-y-4">
-            <div className="flex items-center gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-              <Search className="w-5 h-5 text-gray-400" />
-              <Input 
-                placeholder="Tìm kiếm giáo viên/người dùng theo email hoặc tên..." 
-                className="border-none focus-visible:ring-0 text-sm"
-                value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
-              />
+        {isAdmin && (
+          <TabsContent value="users" className="space-y-5">
+            {/* System Summary KPI Strip */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+              <div className="bg-white p-4 rounded-xl border border-slate-200">
+                <div className="text-xs font-medium text-slate-500">Giáo viên hoạt động</div>
+                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{systemSummary.activeTeachersCount}</div>
+                <div className="text-xs text-slate-500 mt-1 tabular-nums">
+                  {systemSummary.pendingUsersCount} chờ duyệt · {systemSummary.disabledUsersCount} đã khóa
+                </div>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-slate-200">
+                <div className="text-xs font-medium text-slate-500">Tổng số Đề thi</div>
+                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{systemSummary.totalExams}</div>
+                <div className="text-xs text-slate-500 mt-1 tabular-nums">
+                  {systemSummary.publishedExams} đã xuất bản · {systemSummary.draftExams} bản nháp
+                </div>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-slate-200">
+                <div className="text-xs font-medium text-slate-500">Tổng Thư mục</div>
+                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{systemSummary.totalFolders}</div>
+                <div className="text-xs text-slate-500 mt-1">Trên toàn hệ thống</div>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-slate-200">
+                <div className="text-xs font-medium text-slate-500">Tổng Tài khoản HS</div>
+                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{systemSummary.totalStudents}</div>
+                <div className="text-xs text-slate-500 mt-1 tabular-nums">
+                  {systemSummary.historyOpenStudents} đang mở tra cứu
+                </div>
+              </div>
+              <div className="col-span-2 md:col-span-1 bg-white p-4 rounded-xl border border-slate-200">
+                <div className="text-xs font-medium text-slate-500">Lượt HS nộp bài</div>
+                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{systemSummary.totalResults}</div>
+                <div className="text-xs text-slate-500 mt-1 tabular-nums">
+                  {systemSummary.systemAvgScore ? `Điểm TB: ${systemSummary.systemAvgScore}` : "Chưa có bài nộp"}
+                </div>
+              </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            {/* Filter, Search, Sort & Export Toolbar */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
+              <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+                  <Input
+                    placeholder="Tìm kiếm giáo viên theo tên, email hoặc mã UID..."
+                    className="pl-9 h-10 bg-slate-50 border-slate-200 text-sm rounded-xl"
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select value={userSortBy} onValueChange={(v: any) => setUserSortBy(v)}>
+                    <SelectTrigger className="h-10 w-[180px] rounded-xl text-xs font-medium">
+                      <BarChart3 className="w-3.5 h-3.5 mr-1.5 text-slate-500 shrink-0" />
+                      <SelectValue placeholder="Sắp xếp" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="newest">Mới tham gia</SelectItem>
+                      <SelectItem value="exams">Nhiều đề thi nhất</SelectItem>
+                      <SelectItem value="students">Nhiều TK HS nhất</SelectItem>
+                      <SelectItem value="results">Nhiều lượt thi nhất</SelectItem>
+                      <SelectItem value="name">Tên A – Z</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    onClick={handleExportTeachersCsv}
+                    disabled={filteredUsers.length === 0}
+                    className="h-10 px-4 rounded-xl text-xs font-semibold border-emerald-200 text-emerald-700 hover:bg-emerald-50 gap-1.5 whitespace-nowrap shrink-0"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    Xuất báo cáo GV (CSV)
+                  </Button>
+                </div>
+              </div>
+
+              {/* Segmented Role Filter */}
+              <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg w-fit">
+                {[
+                  { id: "all", label: `Tất cả (${users.length})` },
+                  { id: "teacher", label: `Giáo viên (${users.filter(u => u.role === "teacher").length})` },
+                  { id: "pending", label: `Chờ duyệt (${systemSummary.pendingUsersCount})` },
+                  { id: "admin", label: `GV tổng (${users.filter(u => u.role === "admin").length})` },
+                  { id: "disabled", label: `Đã khóa (${systemSummary.disabledUsersCount})` }
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setUserRoleFilter(tab.id as any)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                      userRoleFilter === tab.id
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Teachers Management Table */}
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left">
-                  <thead className="text-xs text-gray-500 uppercase bg-gray-50 border-b border-gray-200">
+                  <thead className="text-xs text-slate-500 bg-slate-50 border-b border-slate-200">
                     <tr>
-                      <th className="px-6 py-4 font-bold">Tên hiển thị / Email</th>
-                      <th className="px-6 py-4 font-bold">Email tài khoản</th>
-                      <th className="px-6 py-4 font-bold">Vai trò / Quyền</th>
-                      <th className="px-6 py-4 font-bold">Ngày tạo</th>
-                      <th className="px-6 py-4 font-bold text-right">Thao tác</th>
+                      <th className="px-5 py-3.5 font-semibold">Giáo viên / Tài khoản</th>
+                      <th className="px-4 py-3.5 font-semibold">Trạng thái</th>
+                      <th className="px-4 py-3.5 font-semibold text-right">Số đề thi</th>
+                      <th className="px-4 py-3.5 font-semibold text-right">Thư mục</th>
+                      <th className="px-4 py-3.5 font-semibold text-right">Số TK HS</th>
+                      <th className="px-4 py-3.5 font-semibold text-right">Lượt làm bài</th>
+                      <th className="px-4 py-3.5 font-semibold">Ngày tạo</th>
+                      <th className="px-5 py-3.5 font-semibold text-right">Quản lý & Phân quyền</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredUsers.slice((usersPage - 1) * 15, usersPage * 15).map((u) => (
-                      <tr key={u.uid} className="hover:bg-blue-50/30 transition-colors">
-                        <td className="px-6 py-4">
-                          <div className="font-bold text-gray-900 text-base flex items-center gap-2">
-                            <UserIcon className="w-4 h-4 text-blue-600" />
-                            {u.displayName || u.email.split("@")[0]}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="font-mono text-xs text-gray-700">{u.email}</div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className={`font-bold text-xs ${
-                              u.role === "admin" ? "bg-purple-50 text-purple-700 border-purple-200" :
-                              u.role === "teacher" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                              u.role === "disabled" ? "bg-red-50 text-red-700 border-red-200" :
-                              "bg-amber-50 text-amber-700 border-amber-200"
-                            }`}>
-                              {u.role === "admin" ? "Quản trị viên" : u.role === "teacher" ? "Giáo viên (Đã duyệt)" : u.role === "disabled" ? "Đã khóa / Xóa" : "Chờ duyệt"}
-                            </Badge>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-xs text-gray-500">
-                          {u.createdAt ? new Date(u.createdAt).toLocaleDateString("vi-VN") : "N/A"}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex justify-end items-center gap-2">
-                            <Select value={u.role} onValueChange={(val: any) => handleUpdateUserRole(u.uid, val)}>
-                              <SelectTrigger className="h-8 text-xs w-[155px] rounded-lg">
-                                <SelectValue placeholder="Phân quyền" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="teacher">Giáo viên (Đã duyệt)</SelectItem>
-                                <SelectItem value="pending">Chờ duyệt</SelectItem>
-                                <SelectItem value="disabled">Đã khóa / Xóa</SelectItem>
-                                <SelectItem value="admin">Quản trị viên</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                              onClick={() => setDeleteData({ id: u.uid, type: 'user' })}
-                              title="Xóa tài khoản"
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredUsers.slice((usersPage - 1) * 15, usersPage * 15).map((u) => {
+                      const stat = teacherStatsMap.get(u.uid);
+                      const displayName = u.displayName || u.email.split("@")[0];
+                      return (
+                        <tr key={u.uid} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="px-5 py-3.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInspectTeacherTab("exams");
+                                setInspectTeacherUid(u.uid);
+                              }}
+                              className="text-left group"
                             >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              <div className="font-semibold text-slate-900 group-hover:text-blue-600 transition-colors">
+                                {displayName}
+                              </div>
+                              <div className="font-mono text-xs text-slate-500 mt-0.5">{u.email}</div>
+                            </button>
+                          </td>
+                          <td className="px-4 py-3.5 whitespace-nowrap">
+                            <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
+                              u.role === "admin" ? "text-purple-700" :
+                              u.role === "teacher" ? "text-emerald-700" :
+                              u.role === "disabled" ? "text-rose-700" :
+                              "text-amber-700"
+                            }`}>
+                              {u.role === "admin" ? "GV tổng (Admin)" :
+                               u.role === "teacher" ? "Giáo viên (Đã duyệt)" :
+                               u.role === "disabled" ? "Đã khóa / Xóa" :
+                               "Chờ duyệt"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3.5 text-right tabular-nums">
+                            <div className="font-semibold text-slate-900">{stat?.exams.length || 0}</div>
+                            {(stat?.exams.length || 0) > 0 && (
+                              <div className="text-[11px] text-slate-500">
+                                {stat?.publishedExamsCount} XB · {stat?.draftExamsCount} nháp
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 text-right tabular-nums font-medium text-slate-700">
+                            {stat?.folders.length || 0}
+                          </td>
+                          <td className="px-4 py-3.5 text-right tabular-nums">
+                            <div className="font-semibold text-slate-900">{stat?.students.length || 0}</div>
+                            {(stat?.students.length || 0) > 0 && (
+                              <div className="text-[11px] text-slate-500">
+                                {stat?.studentsHistoryOpenCount} mở tra cứu
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 text-right tabular-nums">
+                            <div className="font-semibold text-slate-900">{stat?.results.length || 0}</div>
+                            {stat?.avgScore !== null && stat?.avgScore !== undefined && (
+                              <div className="text-[11px] text-slate-500">
+                                ĐTB {stat.avgScore.toFixed(1)}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                            {u.createdAt ? new Date(u.createdAt).toLocaleDateString("vi-VN") : "N/A"}
+                          </td>
+                          <td className="px-5 py-3.5 text-right">
+                            <div className="flex justify-end items-center gap-1.5">
+                              {u.role === "pending" && (
+                                <Button
+                                  size="sm"
+                                  className="h-8 px-2.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg gap-1 whitespace-nowrap"
+                                  onClick={() => handleUpdateUserRole(u.uid, "teacher")}
+                                >
+                                  <UserCheck className="w-3.5 h-3.5" />
+                                  Duyệt
+                                </Button>
+                              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs rounded-lg border-slate-200 text-slate-700 hover:bg-slate-100 gap-1 whitespace-nowrap"
+                                onClick={() => {
+                                  setInspectTeacherTab("exams");
+                                  setInspectTeacherUid(u.uid);
+                                }}
+                                title="Xem chi tiết đề thi, học sinh, kết quả của GV này"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-blue-600" />
+                                Chi tiết
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs rounded-lg border-slate-200 text-slate-700 hover:bg-blue-50 hover:text-blue-700 gap-1 whitespace-nowrap"
+                                onClick={() => {
+                                  setSelectedTeacherUid(u.uid);
+                                  setActiveTab("exams");
+                                  toast.success(`Đang lọc dữ liệu của GV: ${displayName}`);
+                                }}
+                                title="Lọc toàn bộ các tab theo GV này"
+                              >
+                                <Filter className="w-3.5 h-3.5" />
+                                Lọc
+                              </Button>
+                              <Select value={u.role} onValueChange={(val: any) => handleUpdateUserRole(u.uid, val)}>
+                                <SelectTrigger className="h-8 text-xs w-[145px] rounded-lg">
+                                  <SelectValue placeholder="Phân quyền" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="teacher">Giáo viên (Đã duyệt)</SelectItem>
+                                  <SelectItem value="pending">Chờ duyệt</SelectItem>
+                                  <SelectItem value="disabled">Đã khóa / Xóa</SelectItem>
+                                  <SelectItem value="admin">GV tổng (Admin)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                onClick={() => setDeleteData({ id: u.uid, type: 'user' })}
+                                title="Khóa / Xóa tài khoản"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                     {filteredUsers.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-6 py-16 text-center text-gray-400">
+                        <td colSpan={8} className="px-6 py-16 text-center text-slate-400">
                           <Shield className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                          <p className="font-medium text-gray-600">Không tìm thấy tài khoản người dùng/giáo viên nào.</p>
+                          <p className="font-medium text-slate-600">Không tìm thấy tài khoản giáo viên nào phù hợp bộ lọc.</p>
                         </td>
                       </tr>
                     )}
@@ -2458,6 +2989,310 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
               Lưu tên mới
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Teacher Detail Inspection Modal (GV tổng) */}
+      <Dialog open={!!inspectTeacherStat} onOpenChange={(open) => !open && setInspectTeacherUid(null)}>
+        <DialogContent className="max-w-5xl max-h-[88vh] overflow-y-auto">
+          {inspectTeacherStat && (
+            <>
+              <DialogHeader>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pr-6">
+                  <div>
+                    <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                      <UserIcon className="w-5 h-5 text-blue-600" />
+                      {inspectTeacherStat.user.displayName || inspectTeacherStat.user.email.split("@")[0]}
+                    </DialogTitle>
+                    <DialogDescription className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-2">
+                      <span className="font-mono">{inspectTeacherStat.user.email}</span>
+                      <span>·</span>
+                      <span className="font-semibold text-slate-700">
+                        {inspectTeacherStat.user.role === "admin" ? "GV tổng (Admin)" :
+                         inspectTeacherStat.user.role === "teacher" ? "Giáo viên (Đã duyệt)" :
+                         inspectTeacherStat.user.role === "disabled" ? "Đã khóa / Xóa" : "Chờ duyệt"}
+                      </span>
+                      <span>·</span>
+                      <span>
+                        Tham gia: {inspectTeacherStat.user.createdAt ? new Date(inspectTeacherStat.user.createdAt).toLocaleDateString("vi-VN") : "N/A"}
+                      </span>
+                    </DialogDescription>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-9 px-3 rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50 text-xs font-semibold gap-1.5 whitespace-nowrap shrink-0"
+                    onClick={() => {
+                      const uid = inspectTeacherStat.user.uid;
+                      const name = inspectTeacherStat.user.displayName || inspectTeacherStat.user.email.split("@")[0];
+                      setSelectedTeacherUid(uid);
+                      setInspectTeacherUid(null);
+                      setActiveTab("exams");
+                      toast.success(`Đã lọc toàn bộ hệ thống theo GV: ${name}`);
+                    }}
+                  >
+                    <Filter className="w-3.5 h-3.5" />
+                    Lọc toàn bộ tab theo GV này
+                  </Button>
+                </div>
+              </DialogHeader>
+
+              {/* Teacher Summary Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-2">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div className="text-xs text-slate-500">Số đề thi</div>
+                  <div className="text-xl font-bold text-slate-900 tabular-nums mt-0.5">{inspectTeacherStat.exams.length}</div>
+                  <div className="text-[11px] text-slate-500 tabular-nums">
+                    {inspectTeacherStat.publishedExamsCount} xuất bản · {inspectTeacherStat.draftExamsCount} nháp
+                  </div>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div className="text-xs text-slate-500">Thư mục đã tạo</div>
+                  <div className="text-xl font-bold text-slate-900 tabular-nums mt-0.5">{inspectTeacherStat.folders.length}</div>
+                  <div className="text-[11px] text-slate-500">Phân loại đề thi</div>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div className="text-xs text-slate-500">Tài khoản Học sinh</div>
+                  <div className="text-xl font-bold text-slate-900 tabular-nums mt-0.5">{inspectTeacherStat.students.length}</div>
+                  <div className="text-[11px] text-slate-500 tabular-nums">
+                    {inspectTeacherStat.studentsHistoryOpenCount} đang mở tra cứu
+                  </div>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div className="text-xs text-slate-500">Lượt HS nộp bài</div>
+                  <div className="text-xl font-bold text-slate-900 tabular-nums mt-0.5">{inspectTeacherStat.results.length}</div>
+                  <div className="text-[11px] text-slate-500 tabular-nums">
+                    {inspectTeacherStat.avgScore !== null ? `ĐTB: ${inspectTeacherStat.avgScore.toFixed(2)}` : "Chưa có bài nộp"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Inner Sub-tabs */}
+              <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg w-fit">
+                {[
+                  { id: "exams", label: `Đề thi (${inspectTeacherStat.exams.length})` },
+                  { id: "students", label: `Tài khoản HS (${inspectTeacherStat.students.length})` },
+                  { id: "folders", label: `Thư mục (${inspectTeacherStat.folders.length})` },
+                  { id: "results", label: `Kết quả bài làm (${inspectTeacherStat.results.length})` }
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setInspectTeacherTab(t.id as any)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                      inspectTeacherTab === t.id
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Sub-tab Content */}
+              <div className="min-h-[260px]">
+                {inspectTeacherTab === "exams" && (
+                  inspectTeacherStat.exams.length > 0 ? (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                          <tr>
+                            <th className="px-4 py-2.5 font-semibold">Tên đề thi</th>
+                            <th className="px-3 py-2.5 font-semibold">Môn / Khối</th>
+                            <th className="px-3 py-2.5 font-semibold">Trạng thái</th>
+                            <th className="px-3 py-2.5 font-semibold text-right">Câu hỏi</th>
+                            <th className="px-3 py-2.5 font-semibold text-right">Lượt làm</th>
+                            <th className="px-4 py-2.5 font-semibold text-right">Thao tác</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {inspectTeacherStat.exams.map((ex) => {
+                            const subCount = inspectTeacherStat.results.filter(r => r.examId === ex.id).length;
+                            return (
+                              <tr key={ex.id} className="hover:bg-slate-50">
+                                <td className="px-4 py-2.5">
+                                  <div className="font-semibold text-slate-900">{ex.title}</div>
+                                  <div className="font-mono text-[11px] text-slate-400">{ex.id}</div>
+                                </td>
+                                <td className="px-3 py-2.5 text-slate-600">
+                                  {ex.subject} · Lớp {ex.grade}
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <span className={`font-semibold ${ex.status === "published" ? "text-emerald-700" : "text-amber-700"}`}>
+                                    {ex.status === "published" ? "Đã xuất bản" : "Bản nháp"}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">
+                                  {ex.questions?.length || 0}
+                                </td>
+                                <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-900">
+                                  {subCount}
+                                </td>
+                                <td className="px-4 py-2.5 text-right">
+                                  <div className="flex justify-end gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 px-2 text-xs text-blue-600 hover:bg-blue-50"
+                                      onClick={() => setPreviewExam(ex)}
+                                    >
+                                      <Eye className="w-3.5 h-3.5 mr-1" />
+                                      Xem đề
+                                    </Button>
+                                    {ex.status === "published" && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 px-2 text-xs text-slate-600 hover:bg-slate-100"
+                                        onClick={() => copyShareLink(ex.id)}
+                                      >
+                                        <Share2 className="w-3.5 h-3.5" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
+                      Giáo viên này chưa tạo đề thi nào.
+                    </div>
+                  )
+                )}
+
+                {inspectTeacherTab === "students" && (
+                  inspectTeacherStat.students.length > 0 ? (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                          <tr>
+                            <th className="px-4 py-2.5 font-semibold">Mã HS</th>
+                            <th className="px-3 py-2.5 font-semibold">Họ và tên</th>
+                            <th className="px-3 py-2.5 font-semibold">Lớp / Trường</th>
+                            <th className="px-3 py-2.5 font-semibold text-center">Tra cứu lịch sử</th>
+                            <th className="px-4 py-2.5 font-semibold text-right">Ngày cấp</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {inspectTeacherStat.students.map((st) => {
+                            const hasAccess = !!st.canViewHistory;
+                            return (
+                              <tr key={st.id} className="hover:bg-slate-50">
+                                <td className="px-4 py-2.5 font-mono font-semibold text-blue-800">{st.studentId}</td>
+                                <td className="px-3 py-2.5 font-semibold text-slate-900">{st.fullName}</td>
+                                <td className="px-3 py-2.5 text-slate-600">
+                                  Lớp {st.studentClass}{st.schoolName ? ` · ${st.schoolName}` : ""}
+                                </td>
+                                <td className="px-3 py-2.5 text-center">
+                                  <div className="inline-flex items-center gap-2">
+                                    <Switch
+                                      checked={hasAccess}
+                                      onCheckedChange={() => handleToggleStudentHistoryAccess(st.id, hasAccess, st.fullName)}
+                                    />
+                                    <span className={hasAccess ? "text-emerald-700 font-semibold" : "text-slate-400"}>
+                                      {hasAccess ? "Mở" : "Khóa"}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-slate-500 tabular-nums">
+                                  {st.createdAt ? new Date(st.createdAt).toLocaleDateString("vi-VN") : "N/A"}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
+                      Giáo viên này chưa cấp tài khoản học sinh nào.
+                    </div>
+                  )
+                )}
+
+                {inspectTeacherTab === "folders" && (
+                  inspectTeacherStat.folders.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {inspectTeacherStat.folders.map((fd) => {
+                        const fdExamCount = inspectTeacherStat.exams.filter(e => e.folderId === fd.id).length;
+                        return (
+                          <div key={fd.id} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-1">
+                            <div className="font-semibold text-slate-900 text-sm truncate">📁 {fd.name}</div>
+                            <div className="text-xs text-slate-500 tabular-nums">
+                              Khối {fd.grade || "Chung"} · {fdExamCount} đề thi
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
+                      Giáo viên này chưa tạo thư mục nào.
+                    </div>
+                  )
+                )}
+
+                {inspectTeacherTab === "results" && (
+                  inspectTeacherStat.results.length > 0 ? (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                          <tr>
+                            <th className="px-4 py-2.5 font-semibold">Học sinh / Lớp</th>
+                            <th className="px-3 py-2.5 font-semibold">Đề thi</th>
+                            <th className="px-3 py-2.5 font-semibold text-right">Điểm số</th>
+                            <th className="px-3 py-2.5 font-semibold">Thời gian nộp</th>
+                            <th className="px-4 py-2.5 font-semibold text-right">Thao tác</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {inspectTeacherStat.results.slice(0, 50).map((r) => (
+                            <tr key={r.id} className="hover:bg-slate-50">
+                              <td className="px-4 py-2.5">
+                                <div className="font-semibold text-slate-900">{r.studentName}</div>
+                                <div className="text-[11px] text-slate-500">
+                                  {r.studentClass ? `Lớp ${r.studentClass}` : ""}{r.schoolName ? ` · ${r.schoolName}` : ""}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-700 font-medium">{r.examTitle}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums font-bold text-slate-900">
+                                {Number(r.score).toFixed(1)} / 10
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-500 tabular-nums">
+                                {new Date(r.submittedAt).toLocaleString("vi-VN")}
+                              </td>
+                              <td className="px-4 py-2.5 text-right">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs text-blue-600 hover:bg-blue-50"
+                                  onClick={() => setViewResult(r)}
+                                >
+                                  <Eye className="w-3.5 h-3.5 mr-1" />
+                                  Chi tiết
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
+                      Chưa có lượt học sinh nào nộp bài trên các đề của giáo viên này.
+                    </div>
+                  )
+                )}
+              </div>
+
+              <DialogFooter className="pt-2 border-t">
+                <Button variant="outline" onClick={() => setInspectTeacherUid(null)}>Đóng</Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
