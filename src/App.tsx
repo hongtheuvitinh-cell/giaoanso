@@ -496,8 +496,8 @@ export default function App() {
                   ) : (
                     <User className="w-3.5 h-3.5 text-blue-600" />
                   )}
-                  <span className="text-xs max-w-[130px] truncate font-semibold">
-                    {userProfile?.role === "disabled" ? "[Đã bị khóa/xóa] " : userProfile?.role === "pending" ? "[Chờ duyệt] " : ""}
+                  <span className="text-xs max-w-[160px] truncate font-semibold">
+                    {userProfile?.role === "admin" ? "[GV tổng] " : userProfile?.role === "disabled" ? "[Đã bị khóa/xóa] " : userProfile?.role === "pending" ? "[Chờ duyệt] " : ""}
                     {user.displayName || user.email}
                   </span>
                 </div>
