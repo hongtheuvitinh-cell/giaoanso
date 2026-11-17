@@ -32,7 +32,8 @@ import {
   BookOpen,
   CheckCircle2,
   RefreshCw,
-  X
+  X,
+  AlertTriangle
 } from "lucide-react";
 import { db, collection, onSnapshot, query, where, doc, getDoc, deleteDoc, updateDoc, setDoc, auth, getDocs } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -66,6 +67,12 @@ import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import {
+  parseStudentFile,
+  downloadStudentExcelTemplate,
+  isCorruptedStudentAccount,
+  StudentImportResult
+} from "@/lib/student-import";
 
 interface UserProfile {
   uid: string;
@@ -111,6 +118,11 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
   const [viewResult, setViewResult] = useState<ExamResult | null>(null);
   const [deleteData, setDeleteData] = useState<{ id: string, type: 'exam' | 'result' | 'folder' | 'student' | 'user' } | null>(null);
+  const [importPreview, setImportPreview] = useState<(StudentImportResult & { fileName: string }) | null>(null);
+  const [importingStudents, setImportingStudents] = useState(false);
+  const [skipDuplicateStudentIds, setSkipDuplicateStudentIds] = useState(true);
+  const [selectedStudentDocIds, setSelectedStudentDocIds] = useState<Set<string>>(new Set());
+  const [batchDeletingStudents, setBatchDeletingStudents] = useState(false);
 
   useEffect(() => {
     if (userProfile?.role === "admin" && !hasAutoSelectedAdminTabRef.current) {
@@ -312,53 +324,71 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     toast.success("Đã tải xuống file mẫu CSV thành công!");
   };
 
-  const handleCsvUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDownloadExcelTemplate = () => {
+    downloadStudentExcelTemplate();
+    toast.success("Đã tải xuống file mẫu Excel (.xlsx) thành công!");
+  };
+
+  const handleCsvUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const text = e.target?.result as string;
-        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-        if (lines.length <= 1) {
-          toast.error("File CSV không có dữ liệu hoặc sai định dạng.");
-          return;
-        }
-
-        let successCount = 0;
-        for (let i = 1; i < lines.length; i++) {
-          const line = lines[i];
-          const parts = line.split(",").map(p => p.trim().replace(/^["']|["']$/g, ""));
-          if (parts.length >= 4) {
-            const [studentId, password, fullName, studentClass, schoolName] = parts;
-            if (studentId && password && fullName && studentClass) {
-              const accId = `student_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-              const newAcc: StudentAccount = {
-                id: accId,
-                studentId,
-                password,
-                fullName,
-                studentClass,
-                schoolName: schoolName || "",
-                teacherId: userProfile?.uid || "",
-                createdAt: new Date().toISOString(),
-                mustChangePassword: true
-              };
-              await setDoc(doc(db, "studentAccounts", accId), newAcc);
-              successCount++;
-            }
-          }
-        }
-
-        toast.success(`Đã cấp thành công ${successCount} tài khoản học sinh từ file CSV!`);
-        if (event.target) event.target.value = "";
-      } catch (err) {
-        console.error(err);
-        toast.error("Lỗi khi đọc file CSV.");
+    try {
+      const result = await parseStudentFile(file);
+      if (result.validRows.length === 0 && result.skippedRows.length === 0) {
+        toast.error("File không có dữ liệu học sinh.");
+        return;
       }
-    };
-    reader.readAsText(file, "UTF-8");
+      setImportPreview({ ...result, fileName: file.name });
+      if (result.validRows.length === 0) {
+        toast.error(`Không có dòng hợp lệ nào trong file (${result.skippedRows.length} dòng bị lỗi/sai định dạng).`);
+      }
+    } catch (err: any) {
+      console.error("Student file parse error:", err);
+      toast.error(err?.message || "Không thể đọc file danh sách học sinh.");
+    } finally {
+      if (event.target) event.target.value = "";
+    }
+  };
+
+  const handleConfirmImportStudents = async () => {
+    if (!importPreview) return;
+    const existingIds = new Set(studentAccounts.map((s) => s.studentId.trim().toLowerCase()));
+    const rowsToImport = skipDuplicateStudentIds
+      ? importPreview.validRows.filter((r) => !existingIds.has(r.studentId.trim().toLowerCase()))
+      : importPreview.validRows;
+
+    if (rowsToImport.length === 0) {
+      toast.warning("Tất cả Mã HS trong file đã tồn tại hoặc không có dòng mới để nhập.");
+      return;
+    }
+
+    setImportingStudents(true);
+    try {
+      let successCount = 0;
+      for (const row of rowsToImport) {
+        const accId = `student_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const newAcc: StudentAccount = {
+          id: accId,
+          studentId: row.studentId,
+          password: row.password,
+          fullName: row.fullName,
+          studentClass: row.studentClass,
+          schoolName: row.schoolName || "",
+          teacherId: userProfile?.uid || "",
+          createdAt: new Date().toISOString(),
+          mustChangePassword: true
+        };
+        await setDoc(doc(db, "studentAccounts", accId), newAcc);
+        successCount++;
+      }
+      toast.success(`Đã cấp thành công ${successCount} tài khoản học sinh từ ${importPreview.detectedFormat}!`);
+      setImportPreview(null);
+    } catch (err) {
+      console.error("Import students error:", err);
+      toast.error("Lỗi khi lưu danh sách tài khoản học sinh.");
+    } finally {
+      setImportingStudents(false);
+    }
   };
 
   // Student Account creation modal state
@@ -566,11 +596,54 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const handleDeleteStudentAccount = async (accId: string) => {
     try {
       await deleteDoc(doc(db, "studentAccounts", accId));
+      setSelectedStudentDocIds((prev) => {
+        const next = new Set(prev);
+        next.delete(accId);
+        return next;
+      });
       toast.success("Đã xóa tài khoản học sinh thành công.");
       setDeleteData(null);
     } catch (err) {
       console.error(err);
       toast.error("Lỗi khi xóa tài khoản.");
+    }
+  };
+
+  const corruptedStudents = useMemo(
+    () => scopedStudents.filter(isCorruptedStudentAccount),
+    [scopedStudents]
+  );
+
+  const handleCleanupCorruptedStudents = async () => {
+    if (corruptedStudents.length === 0) return;
+    setBatchDeletingStudents(true);
+    try {
+      await Promise.all(
+        corruptedStudents.map((st) => deleteDoc(doc(db, "studentAccounts", st.id)))
+      );
+      toast.success(`Đã dọn sạch ${corruptedStudents.length} tài khoản học sinh bị lỗi mã hóa!`);
+      setSelectedStudentDocIds(new Set());
+    } catch (err) {
+      console.error(err);
+      toast.error("Lỗi khi xóa các tài khoản học sinh bị lỗi.");
+    } finally {
+      setBatchDeletingStudents(false);
+    }
+  };
+
+  const handleBatchDeleteSelectedStudents = async () => {
+    if (selectedStudentDocIds.size === 0) return;
+    setBatchDeletingStudents(true);
+    try {
+      const ids = Array.from(selectedStudentDocIds);
+      await Promise.all(ids.map((id) => deleteDoc(doc(db, "studentAccounts", id))));
+      toast.success(`Đã xóa ${ids.length} tài khoản học sinh đã chọn.`);
+      setSelectedStudentDocIds(new Set());
+    } catch (err) {
+      console.error(err);
+      toast.error("Lỗi khi xóa hàng loạt tài khoản học sinh.");
+    } finally {
+      setBatchDeletingStudents(false);
     }
   };
 
@@ -1699,28 +1772,108 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 <Lock className="w-3.5 h-3.5 text-gray-500" />
                 Khóa tất cả
               </Button>
-              <Button onClick={handleDownloadCsvTemplate} variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 font-semibold gap-2 rounded-xl h-10">
-                <Download className="w-4 h-4" />
-                Tải file mẫu CSV
+              <Button onClick={handleDownloadExcelTemplate} variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 font-semibold gap-2 rounded-xl h-10 text-xs">
+                <FileSpreadsheet className="w-4 h-4" />
+                Tải mẫu Excel (.xlsx)
               </Button>
-              <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-2 rounded-xl h-10 px-4 inline-flex items-center text-sm shadow-sm transition-all">
+              <Button onClick={handleDownloadCsvTemplate} variant="outline" className="border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold gap-2 rounded-xl h-10 text-xs">
+                <Download className="w-4 h-4" />
+                Tải mẫu CSV
+              </Button>
+              <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-2 rounded-xl h-10 px-4 inline-flex items-center text-xs sm:text-sm shadow-sm transition-all whitespace-nowrap">
                 <FileUp className="w-4 h-4" />
-                Tải lên file CSV danh sách HS
-                <input type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />
+                Tải lên Excel / CSV HS
+                <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleCsvUpload} />
               </label>
-              <Button onClick={() => setShowStudentModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold gap-2 rounded-xl h-10">
+              <Button onClick={() => setShowStudentModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold gap-2 rounded-xl h-10 text-xs sm:text-sm">
                 <UserPlus className="w-4 h-4" />
                 Cấp tài khoản cá nhân
               </Button>
             </div>
           </div>
 
+          {corruptedStudents.length > 0 && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-rose-50 border border-rose-200 rounded-xl text-sm">
+              <div className="flex items-start gap-2.5 text-rose-900">
+                <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold">
+                    Phát hiện {corruptedStudents.length} tài khoản học sinh bị lỗi mã hóa / ký tự rác
+                  </div>
+                  <div className="text-xs text-rose-700 mt-0.5">
+                    Nguyên nhân thường do giáo viên tải trực tiếp file Excel (.xlsx) hoặc file sai bảng mã ở phiên bản trước. Hệ thống đã nâng cấp hỗ trợ cả Excel và CSV kèm kiểm tra trước khi lưu.
+                  </div>
+                </div>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={batchDeletingStudents}
+                onClick={handleCleanupCorruptedStudents}
+                className="h-9 px-3.5 text-xs font-semibold rounded-lg shrink-0 whitespace-nowrap gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {batchDeletingStudents ? "Đang dọn sạch..." : `Xóa ngay ${corruptedStudents.length} TK lỗi`}
+              </Button>
+            </div>
+          )}
+
+          {selectedStudentDocIds.size > 0 && (
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs">
+              <span className="font-semibold text-slate-800">
+                Đã chọn {selectedStudentDocIds.size} tài khoản học sinh
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs"
+                  onClick={() => setSelectedStudentDocIds(new Set())}
+                >
+                  Bỏ chọn
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={batchDeletingStudents}
+                  onClick={handleBatchDeleteSelectedStudents}
+                  className="h-8 px-3 text-xs gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Xóa {selectedStudentDocIds.size} TK đã chọn
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm text-left">
                 <thead className="text-xs text-gray-500 uppercase bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <th className="px-6 py-4 font-bold">Mã HS / Tài khoản</th>
+                    <th className="pl-4 pr-2 py-4 w-10">
+                      <Checkbox
+                        checked={
+                          filteredStudents.slice((studentsPage - 1) * 15, studentsPage * 15).length > 0 &&
+                          filteredStudents
+                            .slice((studentsPage - 1) * 15, studentsPage * 15)
+                            .every((s) => selectedStudentDocIds.has(s.id))
+                        }
+                        onCheckedChange={(checked) => {
+                          const pageItems = filteredStudents.slice((studentsPage - 1) * 15, studentsPage * 15);
+                          setSelectedStudentDocIds((prev) => {
+                            const next = new Set(prev);
+                            pageItems.forEach((s) => {
+                              if (checked) next.add(s.id);
+                              else next.delete(s.id);
+                            });
+                            return next;
+                          });
+                        }}
+                        aria-label="Chọn tất cả trang này"
+                      />
+                    </th>
+                    <th className="px-4 py-4 font-bold">Mã HS / Tài khoản</th>
                     <th className="px-6 py-4 font-bold">Họ và tên</th>
                     <th className="px-6 py-4 font-bold">Lớp / Trường</th>
                     <th className="px-6 py-4 font-bold">Mật khẩu</th>
@@ -1736,15 +1889,39 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 <tbody className="divide-y divide-gray-100">
                   {filteredStudents.slice((studentsPage - 1) * 15, studentsPage * 15).map((st) => {
                     const hasAccess = !!st.canViewHistory;
+                    const isCorrupted = isCorruptedStudentAccount(st);
                     return (
-                      <tr key={st.id} className="hover:bg-blue-50/30 transition-colors">
-                        <td className="px-6 py-4">
-                          <div className="font-mono font-bold text-blue-900 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200 w-fit">
+                      <tr key={st.id} className={`transition-colors ${isCorrupted ? "bg-rose-50/50 hover:bg-rose-50" : "hover:bg-blue-50/30"}`}>
+                        <td className="pl-4 pr-2 py-4">
+                          <Checkbox
+                            checked={selectedStudentDocIds.has(st.id)}
+                            onCheckedChange={(checked) => {
+                              setSelectedStudentDocIds((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.add(st.id);
+                                else next.delete(st.id);
+                                return next;
+                              });
+                            }}
+                            aria-label={`Chọn ${st.fullName}`}
+                          />
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className={`font-mono font-bold px-2.5 py-1 rounded-lg border max-w-[220px] truncate ${
+                            isCorrupted
+                              ? "text-rose-800 bg-rose-50 border-rose-200"
+                              : "text-blue-900 bg-blue-50 border-blue-200 w-fit"
+                          }`} title={st.studentId}>
                             {st.studentId}
                           </div>
+                          {isCorrupted && (
+                            <div className="text-[11px] font-medium text-rose-600 mt-1">
+                              Lỗi mã hóa / Ký tự rác
+                            </div>
+                          )}
                         </td>
                         <td className="px-6 py-4">
-                          <div className="font-bold text-gray-900 text-base">{st.fullName}</div>
+                          <div className="font-bold text-gray-900 text-base max-w-[220px] truncate" title={st.fullName}>{st.fullName}</div>
                           {isAdmin && (
                             <div className="text-[11px] text-slate-500 mt-0.5">
                               GV tạo: <span className="font-medium text-slate-700">{getTeacherInfo(st.teacherId).name}</span>
@@ -1823,7 +2000,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                   })}
                   {filteredStudents.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-6 py-16 text-center text-gray-400">
+                      <td colSpan={7} className="px-6 py-16 text-center text-gray-400">
                         <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
                         <p className="font-medium text-gray-600">Chưa có tài khoản học sinh nào được cấp.</p>
                         <p className="text-xs text-gray-400 mt-1">Cấp tài khoản giúp học sinh đăng nhập chính xác, ngăn chặn tình trạng điền tên lung tung.</p>
@@ -3290,6 +3467,114 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
 
               <DialogFooter className="pt-2 border-t">
                 <Button variant="outline" onClick={() => setInspectTeacherUid(null)}>Đóng</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+      {/* Student Import Preview & Validation Modal */}
+      <Dialog open={!!importPreview} onOpenChange={(open) => !open && !importingStudents && setImportPreview(null)}>
+        <DialogContent className="max-w-4xl max-h-[88vh] overflow-y-auto">
+          {importPreview && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                  Kiểm tra danh sách học sinh trước khi lưu
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500">
+                  File: <span className="font-medium text-slate-700">{importPreview.fileName}</span> · Định dạng nhận diện: <span className="font-medium text-slate-700">{importPreview.detectedFormat}</span>
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                    <div className="text-xs text-emerald-700">Dòng hợp lệ</div>
+                    <div className="text-xl font-bold text-emerald-900 tabular-nums">{importPreview.validRows.length}</div>
+                  </div>
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                    <div className="text-xs text-amber-700">Dòng bị bỏ qua / lỗi</div>
+                    <div className="text-xl font-bold text-amber-900 tabular-nums">{importPreview.skippedRows.length}</div>
+                  </div>
+                  <div className="col-span-2 sm:col-span-1 p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-2">
+                    <Checkbox
+                      id="skipDupIds"
+                      checked={skipDuplicateStudentIds}
+                      onCheckedChange={(v) => setSkipDuplicateStudentIds(!!v)}
+                    />
+                    <label htmlFor="skipDupIds" className="text-xs text-slate-700 cursor-pointer leading-snug">
+                      Bỏ qua các Mã HS đã tồn tại trong danh sách
+                    </label>
+                  </div>
+                </div>
+
+                {importPreview.validRows.length > 0 && (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="max-h-[280px] overflow-y-auto">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 sticky top-0">
+                          <tr>
+                            <th className="px-3 py-2 font-semibold">Dòng</th>
+                            <th className="px-3 py-2 font-semibold">Mã HS</th>
+                            <th className="px-3 py-2 font-semibold">Họ và tên</th>
+                            <th className="px-3 py-2 font-semibold">Lớp</th>
+                            <th className="px-3 py-2 font-semibold">Trường</th>
+                            <th className="px-3 py-2 font-semibold">Mật khẩu</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {importPreview.validRows.slice(0, 100).map((row) => {
+                            const isDup = studentAccounts.some(
+                              (s) => s.studentId.trim().toLowerCase() === row.studentId.trim().toLowerCase()
+                            );
+                            return (
+                              <tr key={row.rowIndex} className={isDup ? "bg-amber-50/40" : ""}>
+                                <td className="px-3 py-2 text-slate-400 tabular-nums">{row.rowIndex}</td>
+                                <td className="px-3 py-2 font-mono font-semibold text-blue-800">
+                                  {row.studentId}
+                                  {isDup && <span className="ml-1.5 text-[10px] font-sans text-amber-700">(Đã có)</span>}
+                                </td>
+                                <td className="px-3 py-2 font-medium text-slate-900">{row.fullName}</td>
+                                <td className="px-3 py-2 text-slate-700">{row.studentClass}</td>
+                                <td className="px-3 py-2 text-slate-600">{row.schoolName || "—"}</td>
+                                <td className="px-3 py-2 font-mono text-slate-600">{row.password}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {importPreview.skippedRows.length > 0 && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1.5">
+                    <div className="text-xs font-semibold text-rose-800">
+                      Các dòng bị loại ({importPreview.skippedRows.length}):
+                    </div>
+                    <div className="max-h-28 overflow-y-auto space-y-1 text-xs text-rose-700">
+                      {importPreview.skippedRows.slice(0, 20).map((sk) => (
+                        <div key={`${sk.rowIndex}-${sk.rawPreview}`} className="truncate">
+                          Dòng {sk.rowIndex}: <span className="font-mono">{sk.rawPreview}</span> — {sk.reason}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="pt-2 border-t gap-2">
+                <Button variant="outline" disabled={importingStudents} onClick={() => setImportPreview(null)}>
+                  Hủy bỏ
+                </Button>
+                <Button
+                  disabled={importingStudents || importPreview.validRows.length === 0}
+                  onClick={handleConfirmImportStudents}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                >
+                  {importingStudents ? "Đang lưu tài khoản..." : `Xác nhận nhập ${importPreview.validRows.length} tài khoản`}
+                </Button>
               </DialogFooter>
             </>
           )}
