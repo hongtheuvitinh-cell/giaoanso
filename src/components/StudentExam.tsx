@@ -44,6 +44,11 @@ import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 
+const PORTAL_API = (
+  import.meta.env.VITE_PORTAL_API_URL ||
+  "https://hocvatly-thpt.vercel.app"
+).replace(/\/+$/, "");
+
 export default function StudentExam() {
   const [examCode, setExamCode] = useState("");
   const [loginStudentId, setLoginStudentId] = useState("");
@@ -74,7 +79,9 @@ export default function StudentExam() {
   const [reviewExamData, setReviewExamData] = useState<Exam | null>(null);
   const [loadingReview, setLoadingReview] = useState(false);
   const [historyAccessBlocked, setHistoryAccessBlocked] = useState(false);
-
+  const [isVerifyingSso, setIsVerifyingSso] = useState(() =>
+    Boolean(new URLSearchParams(window.location.search).get("sso_token"))
+  );
   const fetchStudentHistory = async (acc: any) => {
     if (!acc || !acc.fullName) return;
     setLoadingHistory(true);
@@ -229,11 +236,11 @@ export default function StudentExam() {
     }
   };
 
-  const fetchExam = async (codeOverride?: string) => {
+  const fetchExam = async (codeOverride?: string): Promise<Exam | null> => {
     const code = (codeOverride || examCode).trim();
     if (!code) {
       toast.error("Vui lòng nhập mã đề thi.");
-      return;
+      return null;
     }
     setLoading(true);
     try {
@@ -241,15 +248,16 @@ export default function StudentExam() {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data() as Exam;
-        if (data.status === 'draft') {
+        if (data.status === "draft") {
           toast.error("Đề thi này hiện đang là bản nháp và chưa được xuất bản.");
-          setLoading(false);
-          return;
+          return null;
         }
         setExam(data);
         setTimeLeft(data.timeLimit * 60);
+        return data;
       } else {
         toast.error("Không tìm thấy đề thi với mã này.");
+        return null;
       }
     } catch (err) {
       try {
@@ -258,6 +266,7 @@ export default function StudentExam() {
         console.error(wrappedErr);
         toast.error("Lỗi khi tải đề thi.");
       }
+      return null;
     } finally {
       setLoading(false);
     }
@@ -266,11 +275,86 @@ export default function StudentExam() {
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
     const code = searchParams.get("code") || searchParams.get("exam");
-    if (code) {
-      const trimmedCode = code.trim();
-      setExamCode(trimmedCode);
-      fetchExam(trimmedCode);
+    const ssoToken = searchParams.get("sso_token");
+
+    // Xóa sso_token khỏi thanh địa chỉ cho gọn nhưng giữ nguyên ?code=...
+    if (ssoToken) {
+      searchParams.delete("sso_token");
+      const nextSearch = searchParams.toString();
+      const cleanUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
+      window.history.replaceState({}, "", cleanUrl);
     }
+
+    const verifySsoFromPortal = async (token: string) => {
+      try {
+        const res = await fetch(`${PORTAL_API}/api/sso/verify?token=${encodeURIComponent(token)}`);
+        const data = await res.json();
+        if (!res.ok || !data?.valid || !data?.user?.username) return null;
+
+        const rawCode = String(data.user.username).trim();
+        const upperCode = rawCode.toUpperCase();
+
+        // Tìm thêm thông tin lớp/trường nếu tài khoản đã có sẵn trong studentAccounts
+        let matchedAccount: any = null;
+        try {
+          const candidates = Array.from(new Set([rawCode, upperCode, rawCode.toLowerCase()]));
+          for (const idTry of candidates) {
+            const qAcc = query(collection(db, "studentAccounts"), where("studentId", "==", idTry));
+            const snap = await getDocs(qAcc);
+            if (!snap.empty) {
+              matchedAccount = snap.docs[0].data();
+              break;
+            }
+          }
+        } catch (err) {
+          console.warn("Không tra cứu được studentAccounts, dùng thông tin SSO:", err);
+        }
+
+        if (matchedAccount) return matchedAccount;
+
+        return {
+          studentId: upperCode,
+          fullName: String(data.user.fullName || upperCode).trim(),
+          studentClass: data.user.grade ? `Khối ${data.user.grade}` : "Khối THPT",
+          schoolName: "",
+          mustChangePassword: false,
+        };
+      } catch (err) {
+        console.warn("SSO verify error:", err);
+        return null;
+      }
+    };
+
+    const initStudentEntry = async () => {
+      const trimmedCode = code ? code.trim() : "";
+      if (trimmedCode) setExamCode(trimmedCode);
+
+      const [loadedExam, ssoAccount] = await Promise.all([
+        trimmedCode ? fetchExam(trimmedCode) : Promise.resolve(null),
+        ssoToken ? verifySsoFromPortal(ssoToken) : Promise.resolve(null),
+      ]);
+
+      if (ssoAccount) {
+        setLoggedInAccount(ssoAccount);
+        setStudentName(ssoAccount.fullName);
+        setStudentClass(ssoAccount.studentClass);
+        setSchoolName(ssoAccount.schoolName || "");
+
+        if (loadedExam) {
+          const canStart = await checkAlreadyTakenAndStart(ssoAccount, loadedExam);
+          if (canStart) {
+            setStarted(true);
+            toast.success(`Đã xác thực từ Website Học Tập! Bắt đầu làm bài: ${loadedExam.title}`);
+          }
+        } else {
+          toast.success(`Đã kết nối tài khoản: ${ssoAccount.fullName}`);
+        }
+      }
+
+      setIsVerifyingSso(false);
+    };
+
+    initStudentEntry();
   }, []);
 
   const checkAlreadyTakenAndStart = async (studentAcc: any, currentExam: Exam) => {
@@ -744,8 +828,7 @@ export default function StudentExam() {
         desc: "Thí sinh nhập câu trả lời ngắn vào ô trống."
       };
     }
-
-    return (
+  return (
       <div className="max-w-6xl mx-auto pb-20">
         <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm p-4 border-b flex justify-between items-center mb-6 rounded-b-xl shadow-sm">
           <div className="flex items-center gap-4">
@@ -969,7 +1052,16 @@ export default function StudentExam() {
       </div>
     );
   }
-
+if (isVerifyingSso) {
+    return (
+      <div className="max-w-md mx-auto py-20 text-center space-y-4">
+        <RefreshCw className="w-10 h-10 text-blue-600 animate-spin mx-auto" />
+        <p className="text-sm font-bold text-gray-700">
+          Đang xác thực tài khoản từ Website Học Tập...
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="max-w-6xl mx-auto py-8 px-4">
       <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}>
