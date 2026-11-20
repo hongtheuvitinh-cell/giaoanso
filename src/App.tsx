@@ -75,11 +75,11 @@ export default function App() {
   const [existingLessonPlan, setExistingLessonPlan] = useState("");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-  // Auto-switch to student tab if code is in URL
+  // Auto-switch to student tab if code or sso_token is in URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get("code") || params.get("exam");
-    if (code) {
+    const hasStudentEntry = params.get("code") || params.get("exam") || params.get("sso_token");
+    if (hasStudentEntry) {
       setActiveTab("student");
     }
   }, []);
