@@ -39,6 +39,7 @@ import {
 import { db, doc, getDoc, addDoc, updateDoc, collection, query, where, getDocs, handleFirestoreError, OperationType } from "@/lib/firebase";
 import { Exam, Question } from "@/types";
 import { exportExamToPrintablePdf } from "@/lib/pdf-export";
+import { isShortAnswerCorrect } from "@/lib/answer-grading";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -536,7 +537,7 @@ export default function StudentExam() {
             correctCount++;
           }
         } else if (q.type === "SA") {
-          if (studentAnswer?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase()) {
+          if (isShortAnswerCorrect(studentAnswer, q.correctAnswer)) {
             totalScore += q.points || 0.25;
             correctCount++;
           }
@@ -659,7 +660,7 @@ export default function StudentExam() {
               } else if (q.type === "TF") {
                 isCorrect = q.options?.every((opt, i) => (studentAnswer?.[`opt_${i}`] ?? null) === opt.isCorrect) ?? false;
               } else if (q.type === "SA") {
-                isCorrect = studentAnswer?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase();
+                isCorrect = isShortAnswerCorrect(studentAnswer, q.correctAnswer);
               }
 
               const prevContext = idx > 0 ? exam.questions[idx - 1]?.context?.trim() : undefined;
@@ -966,12 +967,17 @@ export default function StudentExam() {
                     )}
 
                     {currentQuestion.type === "SA" && (
-                      <Input 
-                        placeholder="Nhập câu trả lời của bạn..."
-                        value={answers[currentQuestion.id] || ""}
-                        onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
-                        className="h-12 font-mono font-bold text-base border-blue-300 focus:border-blue-600"
-                      />
+                      <div className="space-y-1.5">
+                        <Input 
+                          placeholder="Nhập câu trả lời của bạn..."
+                          value={answers[currentQuestion.id] || ""}
+                          onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
+                          className="h-12 font-mono font-bold text-base border-blue-300 focus:border-blue-600"
+                        />
+                        <p className="text-[11px] text-gray-500">
+                          Số thập phân có thể nhập dấu chấm (.) hoặc dấu phẩy (,), ví dụ: <span className="font-mono font-semibold">3,5</span> hoặc <span className="font-mono font-semibold">3.5</span>.
+                        </p>
+                      </div>
                     )}
 
                     {currentQuestion.type === "ESSAY" && (
@@ -1519,7 +1525,7 @@ if (isVerifyingSso) {
                 } else if (q.type === "TF") {
                   isCorrect = q.options?.every((opt, i) => (studentAnswer?.[`opt_${i}`] ?? null) === opt.isCorrect) ?? false;
                 } else if (q.type === "SA") {
-                  isCorrect = studentAnswer?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase();
+                  isCorrect = isShortAnswerCorrect(studentAnswer, q.correctAnswer);
                 }
 
                 return (
