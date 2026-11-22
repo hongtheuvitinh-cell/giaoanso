@@ -35,7 +35,7 @@ import {
   X,
   AlertTriangle
 } from "lucide-react";
-import { db, collection, onSnapshot, query, where, doc, getDoc, deleteDoc, updateDoc, setDoc, auth, getDocs } from "@/lib/firebase";
+import { db, collection, query, where, doc, getDoc, deleteDoc, updateDoc, setDoc, auth, getDocs } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -73,6 +73,13 @@ import {
   isCorruptedStudentAccount,
   StudentImportResult
 } from "@/lib/student-import";
+import { isShortAnswerCorrect } from "@/lib/answer-grading";
+import {
+  getManagementCache,
+  setManagementCache,
+  ResultsWindow,
+  ManagementResource
+} from "@/lib/management-cache";
 
 interface UserProfile {
   uid: string;
@@ -95,10 +102,14 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [results, setResults] = useState<ExamResult[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshingData, setRefreshingData] = useState(false);
+  const [resultsWindow, setResultsWindow] = useState<ResultsWindow>("7d");
+  const [loadedResources, setLoadedResources] = useState<Partial<Record<ManagementResource, number>>>({});
+  const loadedResourcesRef = useRef<Partial<Record<ManagementResource, number>>>({});
 
   const [examSearch, setExamSearch] = useState("");
   const [selectedFolderId, setSelectedFolderId] = useState<string>("all");
-  const [activeTab, setActiveTab] = useState(() => userProfile?.role === "admin" ? "users" : "exams");
+  const [activeTab, setActiveTab] = useState(() => userProfile?.role === "admin" ? "users" : "students");
   const hasAutoSelectedAdminTabRef = useRef(false);
   const [userSearch, setUserSearch] = useState("");
   const [userRoleFilter, setUserRoleFilter] = useState<"all" | "teacher" | "pending" | "admin" | "disabled">("all");
@@ -364,7 +375,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
 
     setImportingStudents(true);
     try {
-      let successCount = 0;
+      const createdAccounts: StudentAccount[] = [];
       for (const row of rowsToImport) {
         const accId = `student_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
         const newAcc: StudentAccount = {
@@ -379,9 +390,10 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
           mustChangePassword: true
         };
         await setDoc(doc(db, "studentAccounts", accId), newAcc);
-        successCount++;
+        createdAccounts.push(newAcc);
       }
-      toast.success(`Đã cấp thành công ${successCount} tài khoản học sinh từ ${importPreview.detectedFormat}!`);
+      setStudentAccounts((prev) => [...createdAccounts.reverse(), ...prev]);
+      toast.success(`Đã cấp thành công ${createdAccounts.length} tài khoản học sinh từ ${importPreview.detectedFormat}!`);
       setImportPreview(null);
     } catch (err) {
       console.error("Import students error:", err);
@@ -419,9 +431,11 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     }
     setLoading(true);
     try {
+      const nextTitle = renameInput.trim();
       await updateDoc(doc(db, "exams", renameExamModal.id), {
-        title: renameInput.trim()
+        title: nextTitle
       });
+      setExams((prev) => prev.map((e) => (e.id === renameExamModal.id ? { ...e, title: nextTitle } : e)));
       toast.success("Đã đổi tên đề thi thành công!");
       setRenameExamModal(null);
     } catch (err) {
@@ -432,64 +446,223 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     }
   };
 
+  const MANAGEMENT_CACHE_TTL_MS = 15 * 60 * 1000;
+
+  const getCacheKey = (uid: string, role: string) => `${uid}:${role}`;
+
+  const getRequiredResourcesForTab = (tab: string, isAdminRole: boolean): ManagementResource[] => {
+    switch (tab) {
+      case "users":
+        return isAdminRole ? ["users"] : [];
+      case "students":
+        return ["studentAccounts"];
+      case "exams":
+        return ["exams", "folders"];
+      case "folders":
+        return ["folders", "exams"];
+      case "results":
+        return ["results"];
+      default:
+        return isAdminRole ? ["users"] : ["studentAccounts"];
+    }
+  };
+
+  const loadResources = async (
+    resources: ManagementResource[],
+    options?: { forceRefresh?: boolean; windowOverride?: ResultsWindow; quiet?: boolean }
+  ) => {
+    if (!userProfile || resources.length === 0) {
+      setLoading(false);
+      return;
+    }
+
+    const targetWindow = options?.windowOverride ?? resultsWindow;
+    const isAdminRole = userProfile.role === "admin";
+    const cacheKey = getCacheKey(userProfile.uid, userProfile.role);
+    const cached = getManagementCache(cacheKey);
+    const now = Date.now();
+
+    // Hydrate any cached resources into state first
+    const effectiveTimestamps: Partial<Record<ManagementResource, number>> = {
+      ...loadedResourcesRef.current,
+    };
+
+    if (cached && !options?.forceRefresh) {
+      let hydrated = false;
+      if (cached.fetchedAtByResource.exams && !effectiveTimestamps.exams) {
+        setExams(cached.exams);
+        effectiveTimestamps.exams = cached.fetchedAtByResource.exams;
+        hydrated = true;
+      }
+      if (cached.fetchedAtByResource.folders && !effectiveTimestamps.folders) {
+        setFolders(cached.folders);
+        effectiveTimestamps.folders = cached.fetchedAtByResource.folders;
+        hydrated = true;
+      }
+      if (cached.fetchedAtByResource.studentAccounts && !effectiveTimestamps.studentAccounts) {
+        setStudentAccounts(cached.studentAccounts);
+        effectiveTimestamps.studentAccounts = cached.fetchedAtByResource.studentAccounts;
+        hydrated = true;
+      }
+      if (
+        cached.fetchedAtByResource.results &&
+        (!isAdminRole || cached.resultsWindow === targetWindow) &&
+        !effectiveTimestamps.results
+      ) {
+        setResults(cached.results);
+        effectiveTimestamps.results = cached.fetchedAtByResource.results;
+        hydrated = true;
+      }
+      if (cached.fetchedAtByResource.users && !effectiveTimestamps.users) {
+        setUsers(cached.users);
+        effectiveTimestamps.users = cached.fetchedAtByResource.users;
+        hydrated = true;
+      }
+      if (hydrated) {
+        loadedResourcesRef.current = effectiveTimestamps;
+        setLoadedResources(effectiveTimestamps);
+      }
+    }
+
+    const uniqueResources = Array.from(new Set(resources)).filter((res) => {
+      if (res === "users" && !isAdminRole) return false;
+      if (options?.forceRefresh) return true;
+      if (res === "results" && isAdminRole && options?.windowOverride && cached?.resultsWindow !== targetWindow) {
+        return true;
+      }
+      const fetchedAt = effectiveTimestamps[res];
+      return !fetchedAt || now - fetchedAt >= MANAGEMENT_CACHE_TTL_MS;
+    });
+
+    if (uniqueResources.length === 0) {
+      setLoading(false);
+      return;
+    }
+
+    const hasAnyLoaded = Object.keys(effectiveTimestamps).length > 0;
+    if (hasAnyLoaded) {
+      setRefreshingData(true);
+    } else {
+      setLoading(true);
+    }
+
+    try {
+      const fetchPromises = uniqueResources.map(async (res) => {
+        if (res === "exams") {
+          const q = isAdminRole
+            ? query(collection(db, "exams"))
+            : query(collection(db, "exams"), where("teacherId", "==", userProfile.uid));
+          const snap = await getDocs(q);
+          const list = snap.docs
+            .map((d) => ({ ...d.data(), id: d.id } as Exam))
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          return { res, list };
+        }
+        if (res === "folders") {
+          const q = isAdminRole
+            ? query(collection(db, "folders"))
+            : query(collection(db, "folders"), where("teacherId", "==", userProfile.uid));
+          const snap = await getDocs(q);
+          const list = snap.docs
+            .map((d) => ({ ...d.data(), id: d.id } as Folder))
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          return { res, list };
+        }
+        if (res === "studentAccounts") {
+          const q = isAdminRole
+            ? query(collection(db, "studentAccounts"))
+            : query(collection(db, "studentAccounts"), where("teacherId", "==", userProfile.uid));
+          const snap = await getDocs(q);
+          const list = snap.docs
+            .map((d) => ({ ...d.data(), id: d.id } as StudentAccount))
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          return { res, list };
+        }
+        if (res === "results") {
+          const q = (() => {
+            if (!isAdminRole) {
+              return query(collection(db, "results"), where("teacherId", "==", userProfile.uid));
+            }
+            if (targetWindow === "7d") {
+              const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+              return query(collection(db, "results"), where("submittedAt", ">=", cutoff));
+            }
+            if (targetWindow === "30d") {
+              const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+              return query(collection(db, "results"), where("submittedAt", ">=", cutoff));
+            }
+            return query(collection(db, "results"));
+          })();
+          const snap = await getDocs(q);
+          const list = snap.docs
+            .map((d) => ({ ...d.data(), id: d.id } as ExamResult))
+            .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+          return { res, list };
+        }
+        // res === "users"
+        const snap = await getDocs(query(collection(db, "users")));
+        const list = snap.docs
+          .map((d) => d.data() as UserProfile)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        return { res, list };
+      });
+
+      const fetched = await Promise.all(fetchPromises);
+      const finishedAt = Date.now();
+      const nextTimestamps = { ...effectiveTimestamps };
+
+      fetched.forEach(({ res, list }) => {
+        nextTimestamps[res] = finishedAt;
+        if (res === "exams") setExams(list as Exam[]);
+        else if (res === "folders") setFolders(list as Folder[]);
+        else if (res === "studentAccounts") setStudentAccounts(list as StudentAccount[]);
+        else if (res === "results") setResults(list as ExamResult[]);
+        else if (res === "users") setUsers(list as UserProfile[]);
+      });
+
+      loadedResourcesRef.current = nextTimestamps;
+      setLoadedResources(nextTimestamps);
+
+      if (options?.forceRefresh && !options?.quiet) {
+        toast.success("Đã làm mới dữ liệu tab hiện tại!");
+      }
+    } catch (err) {
+      console.error("Lỗi khi tải dữ liệu quản lý:", err);
+      toast.error("Không thể tải dữ liệu từ máy chủ.");
+    } finally {
+      setLoading(false);
+      setRefreshingData(false);
+    }
+  };
+
   useEffect(() => {
     if (!userProfile) return;
+    const isAdminRole = userProfile.role === "admin";
+    const initialTab = isAdminRole ? "users" : activeTab;
+    loadResources(getRequiredResourcesForTab(initialTab, isAdminRole));
+  }, [userProfile?.uid, userProfile?.role]);
 
-    // Listen for exams
-    let examQuery = query(collection(db, "exams"));
-    if (userProfile.role !== "admin") {
-      examQuery = query(collection(db, "exams"), where("teacherId", "==", userProfile.uid));
-    }
-    const unsubscribeExams = onSnapshot(examQuery, (snapshot) => {
-      const examList = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Exam));
-      setExams(examList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-      setLoading(false);
+  const handleTabChange = (nextTab: string) => {
+    setActiveTab(nextTab);
+    if (!userProfile) return;
+    loadResources(getRequiredResourcesForTab(nextTab, userProfile.role === "admin"));
+  };
+
+  // Keep module session cache synchronized with local mutations (0 extra Firestore reads)
+  useEffect(() => {
+    if (!userProfile || Object.keys(loadedResourcesRef.current).length === 0) return;
+    const cacheKey = getCacheKey(userProfile.uid, userProfile.role);
+    setManagementCache({
+      key: cacheKey,
+      resultsWindow,
+      fetchedAtByResource: loadedResourcesRef.current,
+      exams,
+      folders,
+      studentAccounts,
+      results,
+      users,
     });
-
-    // Listen for folders
-    let folderQuery = query(collection(db, "folders"));
-    if (userProfile.role !== "admin") {
-      folderQuery = query(collection(db, "folders"), where("teacherId", "==", userProfile.uid));
-    }
-    const unsubscribeFolders = onSnapshot(folderQuery, (snapshot) => {
-      const folderList = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Folder));
-      setFolders(folderList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-    });
-
-    // Listen for student accounts
-    let studentAccQuery = query(collection(db, "studentAccounts"));
-    if (userProfile.role !== "admin") {
-      studentAccQuery = query(collection(db, "studentAccounts"), where("teacherId", "==", userProfile.uid));
-    }
-    const unsubscribeStudents = onSnapshot(studentAccQuery, (snapshot) => {
-      const accList = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as StudentAccount));
-      setStudentAccounts(accList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-    });
-
-    // Listen for results
-    const unsubscribeResults = onSnapshot(collection(db, "results"), (snapshot) => {
-      const resultList = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ExamResult));
-      setResults(resultList.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()));
-    });
-
-    // Listen for users (Admin only)
-    let unsubscribeUsers = () => {};
-    if (userProfile.role === "admin") {
-      const userQuery = query(collection(db, "users"));
-      unsubscribeUsers = onSnapshot(userQuery, (snapshot) => {
-        const userList = snapshot.docs.map(doc => doc.data() as UserProfile);
-        setUsers(userList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-      });
-    }
-
-    return () => {
-      unsubscribeExams();
-      unsubscribeFolders();
-      unsubscribeStudents();
-      unsubscribeResults();
-      unsubscribeUsers();
-    };
-  }, [userProfile]);
+  }, [exams, folders, studentAccounts, results, users, loadedResources]);
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) {
@@ -507,6 +680,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
         createdAt: new Date().toISOString()
       };
       await setDoc(doc(db, "folders", folderId), newFolder);
+      setFolders((prev) => [newFolder, ...prev]);
       toast.success("Đã tạo thư mục thành công!");
       setNewFolderName("");
       setNewFolderParentId("none");
@@ -520,6 +694,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const handleDeleteFolder = async (folderId: string) => {
     try {
       await deleteDoc(doc(db, "folders", folderId));
+      setFolders((prev) => prev.filter((f) => f.id !== folderId));
       toast.success("Đã xóa thư mục thành công.");
       setDeleteData(null);
     } catch (err) {
@@ -547,6 +722,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
         mustChangePassword: true
       };
       await setDoc(doc(db, "studentAccounts", accId), newAcc);
+      setStudentAccounts((prev) => [newAcc, ...prev]);
       toast.success(`Đã cấp tài khoản cho học sinh ${newStudentName} thành công!`);
       setNewStudentId("");
       setNewStudentPassword("");
@@ -566,6 +742,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
       await updateDoc(doc(db, "studentAccounts", accId), {
         canViewHistory: nextStatus
       });
+      setStudentAccounts((prev) => prev.map((s) => (s.id === accId ? { ...s, canViewHistory: nextStatus } : s)));
       toast.success(nextStatus 
         ? `Đã MỞ QUYỀN đăng nhập tra cứu lịch sử cho em ${studentName}!`
         : `Đã KHÓA / ĐÓNG BĂNG quyền tra cứu lịch sử của em ${studentName}!`
@@ -579,10 +756,12 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const handleBatchToggleHistoryAccess = async (enable: boolean) => {
     if (filteredStudents.length === 0) return;
     try {
+      const targetIds = new Set(filteredStudents.map((st) => st.id));
       const promises = filteredStudents.map(st => 
         updateDoc(doc(db, "studentAccounts", st.id), { canViewHistory: enable })
       );
       await Promise.all(promises);
+      setStudentAccounts((prev) => prev.map((s) => (targetIds.has(s.id) ? { ...s, canViewHistory: enable } : s)));
       toast.success(enable 
         ? `Đã MỞ QUYỀN đăng nhập tra cứu cho toàn bộ ${filteredStudents.length} học sinh đang hiển thị!`
         : `Đã KHÓA / ĐÓNG BĂNG quyền tra cứu của toàn bộ ${filteredStudents.length} học sinh đang hiển thị!`
@@ -596,6 +775,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const handleDeleteStudentAccount = async (accId: string) => {
     try {
       await deleteDoc(doc(db, "studentAccounts", accId));
+      setStudentAccounts((prev) => prev.filter((s) => s.id !== accId));
       setSelectedStudentDocIds((prev) => {
         const next = new Set(prev);
         next.delete(accId);
@@ -618,9 +798,11 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     if (corruptedStudents.length === 0) return;
     setBatchDeletingStudents(true);
     try {
+      const corruptedIds = new Set(corruptedStudents.map((st) => st.id));
       await Promise.all(
         corruptedStudents.map((st) => deleteDoc(doc(db, "studentAccounts", st.id)))
       );
+      setStudentAccounts((prev) => prev.filter((s) => !corruptedIds.has(s.id)));
       toast.success(`Đã dọn sạch ${corruptedStudents.length} tài khoản học sinh bị lỗi mã hóa!`);
       setSelectedStudentDocIds(new Set());
     } catch (err) {
@@ -636,7 +818,9 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
     setBatchDeletingStudents(true);
     try {
       const ids = Array.from(selectedStudentDocIds);
+      const idSet = new Set(ids);
       await Promise.all(ids.map((id) => deleteDoc(doc(db, "studentAccounts", id))));
+      setStudentAccounts((prev) => prev.filter((s) => !idSet.has(s.id)));
       toast.success(`Đã xóa ${ids.length} tài khoản học sinh đã chọn.`);
       setSelectedStudentDocIds(new Set());
     } catch (err) {
@@ -654,10 +838,18 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
       return;
     }
     try {
+      const nextPass = resetNewPassword.trim();
       await updateDoc(doc(db, "studentAccounts", resetStudentAccount.id), {
-        password: resetNewPassword.trim(),
+        password: nextPass,
         mustChangePassword: resetRequireChange
       });
+      setStudentAccounts((prev) =>
+        prev.map((s) =>
+          s.id === resetStudentAccount.id
+            ? { ...s, password: nextPass, mustChangePassword: resetRequireChange }
+            : s
+        )
+      );
       toast.success(`Đã reset mật khẩu cho học sinh ${resetStudentAccount.fullName} (${resetStudentAccount.studentId}) thành công!`);
       setResetStudentAccount(null);
     } catch (err) {
@@ -669,9 +861,13 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const handleAssignFolder = async () => {
     if (!assignExamModal) return;
     try {
+      const nextFolderId = targetFolderId === "none" ? undefined : targetFolderId;
       await updateDoc(doc(db, "exams", assignExamModal.id), {
         folderId: targetFolderId === "none" ? null : targetFolderId
       });
+      setExams((prev) =>
+        prev.map((e) => (e.id === assignExamModal.id ? { ...e, folderId: nextFolderId } : e))
+      );
       toast.success("Đã cập nhật thư mục cho đề thi thành công!");
       setAssignExamModal(null);
     } catch (err) {
@@ -683,6 +879,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const handleDeleteResult = async (resultId: string) => {
     try {
       await deleteDoc(doc(db, "results", resultId));
+      setResults((prev) => prev.filter((r) => r.id !== resultId));
       toast.success("Đã xóa kết quả thành công.");
       setDeleteData(null);
     } catch (err) {
@@ -694,6 +891,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const handleUpdateUserRole = async (uid: string, newRole: "admin" | "teacher" | "pending" | "disabled") => {
     try {
       await updateDoc(doc(db, "users", uid), { role: newRole, disabled: newRole === "disabled" });
+      setUsers((prev) => prev.map((u) => (u.uid === uid ? { ...u, role: newRole } : u)));
       toast.success(`Đã cập nhật vai trò người dùng thành ${
         newRole === "admin" ? "Quản trị viên" : 
         newRole === "teacher" ? "Giáo viên (Đã duyệt)" : 
@@ -709,6 +907,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
   const handleDeleteUser = async (uid: string) => {
     try {
       await setDoc(doc(db, "users", uid), { role: "disabled", disabled: true, deletedAt: new Date().toISOString() }, { merge: true });
+      setUsers((prev) => prev.map((u) => (u.uid === uid ? { ...u, role: "disabled" } : u)));
       toast.success("Đã khóa / xóa tài khoản thành công. Tài khoản này không thể tự đăng nhập lại để được duyệt.");
       setDeleteData(null);
     } catch (err) {
@@ -725,6 +924,8 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
       await Promise.all(deletePromises);
 
       await deleteDoc(doc(db, "exams", examId));
+      setExams((prev) => prev.filter((e) => e.id !== examId));
+      setResults((prev) => prev.filter((r) => r.examId !== examId));
       toast.success("Đã xóa đề thi và các kết quả liên quan thành công.");
       setDeleteData(null);
     } catch (err) {
@@ -990,6 +1191,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
       const ownerId = r.teacherId || examById.get(r.examId)?.teacherId;
       return ownerId === selectedTeacherUid;
     }
+    if (r.teacherId && r.teacherId === userProfile?.uid) return true;
     return teacherExamIds.has(r.examId);
   });
 
@@ -1226,46 +1428,59 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
           </p>
         </div>
 
-        {isAdmin && (
-          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
-            {systemSummary.pendingUsersCount > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setUserRoleFilter("pending");
-                  setActiveTab("users");
-                }}
-                className="h-10 px-3.5 rounded-xl border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 font-semibold text-xs gap-1.5 whitespace-nowrap shrink-0"
-              >
-                <Clock className="w-4 h-4 text-amber-600" />
-                {systemSummary.pendingUsersCount} GV chờ duyệt
-              </Button>
-            )}
-            <div className="w-full sm:w-[310px]">
-              <Select value={selectedTeacherUid} onValueChange={setSelectedTeacherUid}>
-                <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 text-xs sm:text-sm font-medium">
-                  <Shield className="w-4 h-4 mr-2 text-blue-600 shrink-0" />
-                  <SelectValue placeholder="Phạm vi xem (GV tổng)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">
-                    Toàn hệ thống ({users.length} GV · {exams.length} đề · {studentAccounts.length} HS)
-                  </SelectItem>
-                  {users.map((u) => {
-                    const st = teacherStatsMap.get(u.uid);
-                    const name = u.displayName || u.email.split("@")[0];
-                    return (
-                      <SelectItem key={u.uid} value={u.uid}>
-                        {name} ({st?.exams.length || 0} đề · {st?.students.length || 0} HS)
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={refreshingData}
+            onClick={() => loadResources(getRequiredResourcesForTab(activeTab, isAdmin), { forceRefresh: true })}
+            className="h-10 px-3.5 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-semibold text-xs gap-1.5 whitespace-nowrap shrink-0"
+            title="Chỉ làm mới dữ liệu của tab đang mở để tiết kiệm lượt đọc"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${refreshingData ? "animate-spin" : ""}`} />
+            {refreshingData ? "Đang tải..." : "Làm mới tab này"}
+          </Button>
+          {isAdmin && (
+            <>
+              {systemSummary.pendingUsersCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setUserRoleFilter("pending");
+                    setActiveTab("users");
+                  }}
+                  className="h-10 px-3.5 rounded-xl border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 font-semibold text-xs gap-1.5 whitespace-nowrap shrink-0"
+                >
+                  <Clock className="w-4 h-4 text-amber-600" />
+                  {systemSummary.pendingUsersCount} GV chờ duyệt
+                </Button>
+              )}
+              <div className="w-full sm:w-[310px]">
+                <Select value={selectedTeacherUid} onValueChange={setSelectedTeacherUid}>
+                  <SelectTrigger className="h-10 rounded-xl bg-white border-slate-200 text-xs sm:text-sm font-medium">
+                    <Shield className="w-4 h-4 mr-2 text-blue-600 shrink-0" />
+                    <SelectValue placeholder="Phạm vi xem (GV tổng)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">
+                      Toàn hệ thống ({users.length} GV · {exams.length} đề · {studentAccounts.length} HS)
+                    </SelectItem>
+                    {users.map((u) => {
+                      const st = teacherStatsMap.get(u.uid);
+                      const name = u.displayName || u.email.split("@")[0];
+                      return (
+                        <SelectItem key={u.uid} value={u.uid}>
+                          {name} ({st?.exams.length || 0} đề · {st?.students.length || 0} HS)
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {isAdmin && activeScopedTeacher && (
@@ -1304,29 +1519,29 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
         </div>
       )}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
         <TabsList className="bg-white border border-gray-200 p-1 rounded-lg shadow-sm mb-6 flex flex-wrap h-auto gap-1">
           {isAdmin && (
             <TabsTrigger value="users" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
               <Shield className="w-4 h-4 mr-2" />
-              Quản lý GV ({users.length})
+              Quản lý GV{loadedResources.users ? ` (${users.length})` : ""}
             </TabsTrigger>
           )}
           <TabsTrigger value="exams" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
             <FileText className="w-4 h-4 mr-2" />
-            Đề thi ({scopedExams.length})
+            Đề thi{loadedResources.exams ? ` (${scopedExams.length})` : ""}
           </TabsTrigger>
           <TabsTrigger value="folders" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
             <FolderIcon className="w-4 h-4 mr-2" />
-            Thư mục ({scopedFolders.length})
+            Thư mục{loadedResources.folders ? ` (${scopedFolders.length})` : ""}
           </TabsTrigger>
           <TabsTrigger value="students" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
             <Users className="w-4 h-4 mr-2" />
-            Tài khoản HS ({scopedStudents.length})
+            Tài khoản HS{loadedResources.studentAccounts ? ` (${scopedStudents.length})` : ""}
           </TabsTrigger>
           <TabsTrigger value="results" className="px-5 py-2 rounded-md data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all whitespace-nowrap">
             <Trophy className="w-4 h-4 mr-2" />
-            Kết quả ({filteredResults.length})
+            Kết quả{loadedResources.results ? ` (${filteredResults.length})` : ""}
           </TabsTrigger>
         </TabsList>
 
@@ -2117,7 +2332,33 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                 )}
               </div>
 
-              <div className="flex gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {isAdmin && (
+                  <div className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1 gap-1">
+                    {[
+                      { id: "7d" as ResultsWindow, label: "7 ngày" },
+                      { id: "30d" as ResultsWindow, label: "30 ngày" },
+                      { id: "all" as ResultsWindow, label: "Tất cả" }
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        disabled={refreshingData}
+                        onClick={() => {
+                          setResultsWindow(opt.id);
+                          loadResources(["results"], { forceRefresh: true, windowOverride: opt.id });
+                        }}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                          resultsWindow === opt.id
+                            ? "bg-blue-600 text-white shadow-xs"
+                            : "text-slate-600 hover:bg-white hover:text-slate-900"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <Button 
                   onClick={handleExportFilteredResults}
                   disabled={filteredResults.length === 0}
@@ -2270,6 +2511,24 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
 
         {isAdmin && (
           <TabsContent value="users" className="space-y-5">
+            {(!loadedResources.exams || !loadedResources.studentAccounts || !loadedResources.results) && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700">
+                <span>
+                  Chế độ tiết kiệm: mới tải danh sách <strong>Tài khoản GV</strong>. Các cột số liệu chi tiết sẽ tự cập nhật khi bạn mở từng tab hoặc bấm nút bên cạnh.
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={refreshingData}
+                  onClick={() => loadResources(["exams", "folders", "studentAccounts", "results"])}
+                  className="h-8 px-3 text-xs font-semibold rounded-lg border-blue-200 text-blue-700 bg-white hover:bg-blue-50 shrink-0 gap-1.5"
+                >
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  Nạp số liệu thống kê GV
+                </Button>
+              </div>
+            )}
+
             {/* System Summary KPI Strip */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
               <div className="bg-white p-4 rounded-xl border border-slate-200">
@@ -2281,28 +2540,46 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
               </div>
               <div className="bg-white p-4 rounded-xl border border-slate-200">
                 <div className="text-xs font-medium text-slate-500">Tổng số Đề thi</div>
-                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{systemSummary.totalExams}</div>
+                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
+                  {loadedResources.exams ? systemSummary.totalExams : "—"}
+                </div>
                 <div className="text-xs text-slate-500 mt-1 tabular-nums">
-                  {systemSummary.publishedExams} đã xuất bản · {systemSummary.draftExams} bản nháp
+                  {loadedResources.exams
+                    ? `${systemSummary.publishedExams} đã xuất bản · ${systemSummary.draftExams} bản nháp`
+                    : "Chưa tải tab Đề thi"}
                 </div>
               </div>
               <div className="bg-white p-4 rounded-xl border border-slate-200">
                 <div className="text-xs font-medium text-slate-500">Tổng Thư mục</div>
-                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{systemSummary.totalFolders}</div>
-                <div className="text-xs text-slate-500 mt-1">Trên toàn hệ thống</div>
+                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
+                  {loadedResources.folders ? systemSummary.totalFolders : "—"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  {loadedResources.folders ? "Trên toàn hệ thống" : "Chưa tải tab Thư mục"}
+                </div>
               </div>
               <div className="bg-white p-4 rounded-xl border border-slate-200">
                 <div className="text-xs font-medium text-slate-500">Tổng Tài khoản HS</div>
-                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{systemSummary.totalStudents}</div>
+                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
+                  {loadedResources.studentAccounts ? systemSummary.totalStudents : "—"}
+                </div>
                 <div className="text-xs text-slate-500 mt-1 tabular-nums">
-                  {systemSummary.historyOpenStudents} đang mở tra cứu
+                  {loadedResources.studentAccounts
+                    ? `${systemSummary.historyOpenStudents} đang mở tra cứu`
+                    : "Chưa tải tab Tài khoản HS"}
                 </div>
               </div>
               <div className="col-span-2 md:col-span-1 bg-white p-4 rounded-xl border border-slate-200">
                 <div className="text-xs font-medium text-slate-500">Lượt HS nộp bài</div>
-                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{systemSummary.totalResults}</div>
+                <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
+                  {loadedResources.results ? systemSummary.totalResults : "—"}
+                </div>
                 <div className="text-xs text-slate-500 mt-1 tabular-nums">
-                  {systemSummary.systemAvgScore ? `Điểm TB: ${systemSummary.systemAvgScore}` : "Chưa có bài nộp"}
+                  {!loadedResources.results
+                    ? "Chưa tải tab Kết quả"
+                    : systemSummary.systemAvgScore
+                    ? `Điểm TB: ${systemSummary.systemAvgScore}`
+                    : "Chưa có bài nộp"}
                 </div>
               </div>
             </div>
@@ -2420,30 +2697,48 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                             </span>
                           </td>
                           <td className="px-4 py-3.5 text-right tabular-nums">
-                            <div className="font-semibold text-slate-900">{stat?.exams.length || 0}</div>
-                            {(stat?.exams.length || 0) > 0 && (
-                              <div className="text-[11px] text-slate-500">
-                                {stat?.publishedExamsCount} XB · {stat?.draftExamsCount} nháp
-                              </div>
+                            {loadedResources.exams ? (
+                              <>
+                                <div className="font-semibold text-slate-900">{stat?.exams.length || 0}</div>
+                                {(stat?.exams.length || 0) > 0 && (
+                                  <div className="text-[11px] text-slate-500">
+                                    {stat?.publishedExamsCount} XB · {stat?.draftExamsCount} nháp
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-slate-400">—</span>
                             )}
                           </td>
                           <td className="px-4 py-3.5 text-right tabular-nums font-medium text-slate-700">
-                            {stat?.folders.length || 0}
+                            {loadedResources.folders ? (stat?.folders.length || 0) : <span className="text-slate-400">—</span>}
                           </td>
                           <td className="px-4 py-3.5 text-right tabular-nums">
-                            <div className="font-semibold text-slate-900">{stat?.students.length || 0}</div>
-                            {(stat?.students.length || 0) > 0 && (
-                              <div className="text-[11px] text-slate-500">
-                                {stat?.studentsHistoryOpenCount} mở tra cứu
-                              </div>
+                            {loadedResources.studentAccounts ? (
+                              <>
+                                <div className="font-semibold text-slate-900">{stat?.students.length || 0}</div>
+                                {(stat?.students.length || 0) > 0 && (
+                                  <div className="text-[11px] text-slate-500">
+                                    {stat?.studentsHistoryOpenCount} mở tra cứu
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-slate-400">—</span>
                             )}
                           </td>
                           <td className="px-4 py-3.5 text-right tabular-nums">
-                            <div className="font-semibold text-slate-900">{stat?.results.length || 0}</div>
-                            {stat?.avgScore !== null && stat?.avgScore !== undefined && (
-                              <div className="text-[11px] text-slate-500">
-                                ĐTB {stat.avgScore.toFixed(1)}
-                              </div>
+                            {loadedResources.results ? (
+                              <>
+                                <div className="font-semibold text-slate-900">{stat?.results.length || 0}</div>
+                                {stat?.avgScore !== null && stat?.avgScore !== undefined && (
+                                  <div className="text-[11px] text-slate-500">
+                                    ĐTB {stat.avgScore.toFixed(1)}
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-slate-400">—</span>
                             )}
                           </td>
                           <td className="px-4 py-3.5 text-xs text-slate-500 tabular-nums whitespace-nowrap">
@@ -2468,6 +2763,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                                 onClick={() => {
                                   setInspectTeacherTab("exams");
                                   setInspectTeacherUid(u.uid);
+                                  loadResources(["exams", "folders", "studentAccounts", "results"]);
                                 }}
                                 title="Xem chi tiết đề thi, học sinh, kết quả của GV này"
                               >
@@ -2835,7 +3131,7 @@ export default function ExamManagement({ userProfile, onDuplicate, onEdit }: Exa
                     } else if (q.type === "TF") {
                       isCorrect = q.options?.every((opt, i) => (studentAns?.[`opt_${i}`] ?? null) === opt.isCorrect) ?? false;
                     } else if (q.type === "SA") {
-                      isCorrect = studentAns?.trim().toLowerCase() === q.correctAnswer?.trim().toLowerCase();
+                      isCorrect = isShortAnswerCorrect(studentAns, q.correctAnswer);
                     }
 
                     return (
