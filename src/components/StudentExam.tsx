@@ -173,19 +173,47 @@ export default function StudentExam() {
   const examCacheRef = useRef<Record<string, Exam>>({});
   const [downloadingExamId, setDownloadingExamId] = useState<string | null>(null);
 
+  const EXAM_CACHE_TTL_MS = 30 * 60 * 1000;
+
+  const readCachedExam = (id: string): Exam | null => {
+    if (examCacheRef.current[id]) return examCacheRef.current[id];
+    try {
+      const raw = localStorage.getItem(`exam_cache_v1_${id}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed?.exam && Date.now() - (parsed?.ts || 0) < EXAM_CACHE_TTL_MS) {
+        examCacheRef.current[id] = parsed.exam;
+        return parsed.exam as Exam;
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return null;
+  };
+
+  const writeCachedExam = (id: string, examObj: Exam) => {
+    examCacheRef.current[id] = examObj;
+    try {
+      localStorage.setItem(
+        `exam_cache_v1_${id}`,
+        JSON.stringify({ exam: examObj, ts: Date.now() })
+      );
+    } catch {
+      // Ignore quota exceeded on localStorage
+    }
+  };
+
   const handleDownloadExamPdf = async (examId: string, examTitle?: string) => {
     if (!examId) return;
     setDownloadingExamId(examId);
     try {
-      let examObj: Exam | null = null;
-      if (examCacheRef.current[examId]) {
-        examObj = examCacheRef.current[examId];
-      } else {
+      let examObj: Exam | null = readCachedExam(examId);
+      if (!examObj) {
         const docRef = doc(db, "exams", examId);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           examObj = docSnap.data() as Exam;
-          examCacheRef.current[examId] = examObj;
+          writeCachedExam(examId, examObj);
         }
       }
 
@@ -213,8 +241,9 @@ export default function StudentExam() {
     setReviewExamData(null);
 
     const targetExamId = resultItem.examId;
-    if (examCacheRef.current[targetExamId]) {
-      setReviewExamData(examCacheRef.current[targetExamId]);
+    const cached = readCachedExam(targetExamId);
+    if (cached) {
+      setReviewExamData(cached);
       setLoadingReview(false);
       return;
     }
@@ -224,7 +253,7 @@ export default function StudentExam() {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const examObj = docSnap.data() as Exam;
-        examCacheRef.current[targetExamId] = examObj;
+        writeCachedExam(targetExamId, examObj);
         setReviewExamData(examObj);
       } else {
         toast.error("Không tìm thấy dữ liệu đề thi gốc.");
@@ -243,6 +272,14 @@ export default function StudentExam() {
       toast.error("Vui lòng nhập mã đề thi.");
       return null;
     }
+
+    const cached = readCachedExam(code);
+    if (cached && cached.status !== "draft") {
+      setExam(cached);
+      setTimeLeft(cached.timeLimit * 60);
+      return cached;
+    }
+
     setLoading(true);
     try {
       const docRef = doc(db, "exams", code);
@@ -253,6 +290,7 @@ export default function StudentExam() {
           toast.error("Đề thi này hiện đang là bản nháp và chưa được xuất bản.");
           return null;
         }
+        writeCachedExam(code, data);
         setExam(data);
         setTimeLeft(data.timeLimit * 60);
         return data;
@@ -295,10 +333,28 @@ export default function StudentExam() {
         const rawCode = String(data.user.username).trim();
         const upperCode = rawCode.toUpperCase();
 
-        // Tìm thêm thông tin lớp/trường nếu tài khoản đã có sẵn trong studentAccounts
+        // Tìm thêm thông tin lớp/trường nếu tài khoản đã có sẵn trong studentAccounts (có cache theo phiên)
         let matchedAccount: any = null;
+        const ssoAccCacheKey = `sso_student_acc_v1_${upperCode}`;
         try {
-          const candidates = Array.from(new Set([rawCode, upperCode, rawCode.toLowerCase()]));
+          const cachedSsoRaw = sessionStorage.getItem(ssoAccCacheKey);
+          if (cachedSsoRaw) {
+            const parsed = JSON.parse(cachedSsoRaw);
+            if (Date.now() - (parsed?.ts || 0) < 10 * 60 * 1000) {
+              matchedAccount = parsed.account || null;
+              if (matchedAccount) return matchedAccount;
+              // Cached miss: avoid hitting Firestore again in same session
+              return {
+                studentId: upperCode,
+                fullName: String(data.user.fullName || upperCode).trim(),
+                studentClass: data.user.grade ? `Khối ${data.user.grade}` : "Khối THPT",
+                schoolName: "",
+                mustChangePassword: false,
+              };
+            }
+          }
+
+          const candidates = Array.from(new Set([upperCode, rawCode]));
           for (const idTry of candidates) {
             const qAcc = query(collection(db, "studentAccounts"), where("studentId", "==", idTry));
             const snap = await getDocs(qAcc);
@@ -307,6 +363,10 @@ export default function StudentExam() {
               break;
             }
           }
+          sessionStorage.setItem(
+            ssoAccCacheKey,
+            JSON.stringify({ account: matchedAccount, ts: Date.now() })
+          );
         } catch (err) {
           console.warn("Không tra cứu được studentAccounts, dùng thông tin SSO:", err);
         }
