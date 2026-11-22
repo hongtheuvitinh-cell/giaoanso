@@ -66,6 +66,7 @@ import rehypeKatex from "rehype-katex";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, AlignmentType } from "docx";
 import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
 import { db, doc, setDoc, auth, handleFirestoreError, OperationType } from "@/lib/firebase";
+import { invalidateManagementCache } from "@/lib/management-cache";
 
 // --- Sub-components for performance ---
 
@@ -1085,6 +1086,7 @@ export default function ExamGenerator({
 
       const sanitizedExam = JSON.parse(JSON.stringify(finalExam));
       await setDoc(doc(db, "exams", examId), sanitizedExam);
+      invalidateManagementCache();
       
       if (status === 'published') {
         const studentUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?code=${examId}`;
