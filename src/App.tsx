@@ -50,7 +50,7 @@ import ExamGenerator from "@/components/ExamGenerator";
 import StudentExam from "@/components/StudentExam";
 import ExamManagement from "@/components/ExamManagement";
 import { createDocxTable, parseMarkdownToRuns } from "@/lib/docx-utils";
-import { db, doc, getDoc, setDoc, updateDoc, increment, onSnapshot, auth } from "@/lib/firebase";
+import { db, doc, getDoc, setDoc, updateDoc, increment, auth } from "@/lib/firebase";
 import { Toaster } from "@/components/ui/sonner";
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import { toast } from "sonner";
@@ -210,21 +210,40 @@ export default function App() {
     toast.success("Đã xóa sạch dữ liệu phiên làm việc.");
   };
 
-  // Visit Counter Logic
+  // Visit Counter Logic (optimized: 1 increment per session, no realtime onSnapshot broadcasts)
   useEffect(() => {
     const statsDocRef = doc(db, "stats", "global");
+    const CACHE_KEY = "visit_stats_cache_v1";
+    const COUNTED_KEY = "visit_counted_v1";
 
     const trackVisit = async () => {
       try {
-        const docSnap = await getDoc(statsDocRef);
-        if (docSnap.exists()) {
-          await updateDoc(statsDocRef, {
-            visitCount: increment(1)
-          });
-        } else {
-          await setDoc(statsDocRef, {
-            visitCount: 1
-          });
+        const cachedRaw = sessionStorage.getItem(CACHE_KEY);
+        if (cachedRaw) {
+          const parsed = JSON.parse(cachedRaw);
+          if (typeof parsed?.visitCount === "number" && Date.now() - (parsed?.ts || 0) < 10 * 60 * 1000) {
+            setVisitCount(parsed.visitCount);
+          }
+        }
+
+        const alreadyCounted = sessionStorage.getItem(COUNTED_KEY) === "1";
+        if (!alreadyCounted) {
+          sessionStorage.setItem(COUNTED_KEY, "1");
+          try {
+            await updateDoc(statsDocRef, { visitCount: increment(1) });
+          } catch {
+            // Document may not exist yet
+            await setDoc(statsDocRef, { visitCount: 1 }, { merge: true });
+          }
+        }
+
+        if (!cachedRaw) {
+          const docSnap = await getDoc(statsDocRef);
+          if (docSnap.exists()) {
+            const count = Number(docSnap.data().visitCount || 1);
+            setVisitCount(count);
+            sessionStorage.setItem(CACHE_KEY, JSON.stringify({ visitCount: count, ts: Date.now() }));
+          }
         }
       } catch (err) {
         console.error("Error tracking visit:", err);
@@ -232,15 +251,6 @@ export default function App() {
     };
 
     trackVisit();
-
-    // Listen for real-time updates
-    const unsubscribe = onSnapshot(statsDocRef, (doc) => {
-      if (doc.exists()) {
-        setVisitCount(doc.data().visitCount);
-      }
-    });
-
-    return () => unsubscribe();
   }, []);
 
   // Matrix State
