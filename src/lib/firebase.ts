@@ -1,6 +1,10 @@
 import { initializeApp } from "firebase/app";
 import { 
-  getFirestore, 
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  Firestore,
   doc, 
   getDoc, 
   setDoc, 
@@ -18,7 +22,24 @@ import { getAuth } from "firebase/auth";
 import { firebaseConfig } from "./firebase-config";
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+let dbInstance: Firestore;
+try {
+  dbInstance = initializeFirestore(
+    app,
+    {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    },
+    firebaseConfig.firestoreDatabaseId
+  );
+} catch {
+  // Fallback if Firestore was already initialized (HMR) or IndexedDB is unavailable
+  dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+}
+
+export const db = dbInstance;
 export const auth = getAuth(app);
 
 // Export firestore functions for better module resolution
